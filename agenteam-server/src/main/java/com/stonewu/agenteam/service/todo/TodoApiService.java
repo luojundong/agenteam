@@ -15,6 +15,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -82,7 +83,13 @@ public class TodoApiService {
     public ApiOperationResult delete(String enterprise, String id, HttpServletRequest request) {
         long revision = RequestPreconditions.revision(request);
         return execute(enterprise, id, true, request, actor -> {
-            management.delete(actor, id, revision);
+            try {
+                management.delete(actor, id, revision);
+            } catch (RuntimeException exception) {
+                audit.record(actor.enterpriseId(), actor.user(), "todo.delete", "todo", id, "删除待办失败",
+                    Map.of("error", Objects.toString(exception.getMessage(), "")), false);
+                throw exception;
+            }
             audit.record(actor.enterpriseId(), actor.user(), "todo.delete", "todo", id, "删除待办", Map.of());
             return ApiOperationResult.of(200, Map.of());
         });

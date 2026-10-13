@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -120,11 +121,17 @@ public class IntegrationManagementService {
         var row = current(actor, enterprise, system, id, revision, "integration.manage");
         long nextCredential = row.getCredentialRevision() + 1;
         secrets.store(enterprise, id, secret, actor.id(), nextCredential, clock.instant());
-        save(row, changes(row, actor).set(EnterpriseIntegrationRow::getCredentialRevision, nextCredential)
-            .set(EnterpriseIntegrationRow::getStatus, row.getStatus().equals("enabled") ? "disabled" : row.getStatus())
-            .set(EnterpriseIntegrationRow::getLastCheckStatus, "not_checked")
-            .set(EnterpriseIntegrationRow::getLastCheckedAt, null).set(EnterpriseIntegrationRow::getLastCheckedRevision, null)
-            .set(EnterpriseIntegrationRow::getLastCheckErrorCode, null).set(EnterpriseIntegrationRow::getLastCheckErrorSummary, null));
+        try {
+            save(row, changes(row, actor).set(EnterpriseIntegrationRow::getCredentialRevision, nextCredential)
+                .set(EnterpriseIntegrationRow::getStatus, row.getStatus().equals("enabled") ? "disabled" : row.getStatus())
+                .set(EnterpriseIntegrationRow::getLastCheckStatus, "not_checked")
+                .set(EnterpriseIntegrationRow::getLastCheckedAt, null).set(EnterpriseIntegrationRow::getLastCheckedRevision, null)
+                .set(EnterpriseIntegrationRow::getLastCheckErrorCode, null).set(EnterpriseIntegrationRow::getLastCheckErrorSummary, null));
+        } catch (RuntimeException exception) {
+            audit.record(enterprise, actor, "integration.rotate_secret", "integration", id, "更换应用密钥失败",
+                Map.of("error", Objects.toString(exception.getMessage(), "")), false);
+            throw exception;
+        }
         audit.record(enterprise, actor, "integration.rotate_secret", "integration", id, "更换应用密钥并等待重新校验", Map.of());
         cancellations.cancel(enterprise, id, null, null, null);
         return queries.view(queries.require(enterprise, id));
@@ -139,7 +146,14 @@ public class IntegrationManagementService {
             || row.getExternalTenantId() == null || !secrets.configured(enterprise, id))) {
             throw new ApiException(HttpStatus.CONFLICT, "INTEGRATION_CHECK_REQUIRED", "请先校验当前应用密钥与配置，再启用接入。");
         }
-        save(row, changes(row, actor).set(EnterpriseIntegrationRow::getStatus, status));
+        try {
+            save(row, changes(row, actor).set(EnterpriseIntegrationRow::getStatus, status));
+        } catch (RuntimeException exception) {
+            audit.record(enterprise, actor, "integration.status", "integration", id,
+                status.equals("enabled") ? "启用企业接入失败" : "停用企业接入失败",
+                Map.of("status", status, "error", Objects.toString(exception.getMessage(), "")), false);
+            throw exception;
+        }
         if (status.equals("disabled")) {
             cancellations.cancel(enterprise, id, null, null, null);
         }
@@ -154,8 +168,14 @@ public class IntegrationManagementService {
             throw new ApiException(HttpStatus.CONFLICT, "INTEGRATION_ENABLED", "请先停用接入，再执行删除。");
         }
         cancellations.requireNoActive(enterprise, id);
-        save(row, changes(row, actor).set(EnterpriseIntegrationRow::getStatus, "deleted")
-            .set(EnterpriseIntegrationRow::getDeletedAt, clock.instant()).set(EnterpriseIntegrationRow::getDeletedToken, id));
+        try {
+            save(row, changes(row, actor).set(EnterpriseIntegrationRow::getStatus, "deleted")
+                .set(EnterpriseIntegrationRow::getDeletedAt, clock.instant()).set(EnterpriseIntegrationRow::getDeletedToken, id));
+        } catch (RuntimeException exception) {
+            audit.record(enterprise, actor, "integration.delete", "integration", id, "删除企业接入配置失败",
+                Map.of("error", Objects.toString(exception.getMessage(), "")), false);
+            throw exception;
+        }
         audit.record(enterprise, actor, "integration.delete", "integration", id, "删除已停用的企业接入配置", Map.of());
     }
 

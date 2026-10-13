@@ -29,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -127,7 +128,13 @@ public class InvitationManagementService {
     public InvitationView revoke(AuthContext actor, String id, long revision) {
         authorize(actor);
         var invitation = pending(actor, id, revision);
-        invitations.revoke(invitation, clock.instant());
+        try {
+            invitations.revoke(invitation, clock.instant());
+        } catch (RuntimeException exception) {
+            audit.record(actor.enterpriseId(), actor.user(), "invitation.revoke", "invitation", id, "撤回成员邀请失败",
+                Map.of("error", Objects.toString(exception.getMessage(), "")), false);
+            throw exception;
+        }
         audit.record(actor.enterpriseId(), actor.user(), "invitation.revoke", "invitation", id, "撤回成员邀请",
             Map.of());
         return invitations.view(actor.enterpriseId(), id, clock.instant());

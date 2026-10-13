@@ -147,7 +147,14 @@ public class KnowledgeDocumentService {
         authorize(actor, resource, true);
         var doc = require(actor.enterpriseId(), resource, id, true);
         revision(doc, revision);
-        documents.delete(doc, clock.instant());
+        try {
+            documents.delete(doc, clock.instant());
+        } catch (RuntimeException exception) {
+            audit.record(actor.enterpriseId(), actor.user(), "knowledge.document.delete", "knowledge_document", id,
+                "删除知识资料失败", Map.of("resourceId", resource, "error", Objects.toString(exception.getMessage(), "")),
+                false);
+            throw exception;
+        }
         audit.record(actor.enterpriseId(), actor.user(), "knowledge.document.delete", "knowledge_document", id,
             "删除知识资料", Map.of("resourceId", resource));
     }

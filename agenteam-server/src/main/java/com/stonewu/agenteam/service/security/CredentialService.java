@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -75,8 +76,14 @@ public class CredentialService {
         authorize(actor, null, true);
         validation.validate(input.kind(), input.secret());
         String id = UUID.randomUUID().toString(), name = ResourceInput.text(input.name(), "name", 80, true);
-        secrets.store(id, actor.enterpriseId(), name, input.kind(),
-            encryption.encrypt(input.secret(), binding(actor, id)), actor.userId(), false, clock.instant());
+        try {
+            secrets.store(id, actor.enterpriseId(), name, input.kind(),
+                encryption.encrypt(input.secret(), binding(actor, id)), actor.userId(), false, clock.instant());
+        } catch (RuntimeException exception) {
+            audit.record(actor.enterpriseId(), actor.user(), "credential.create", "credential", id, "创建连接凭据失败",
+                Map.of("kind", input.kind(), "error", Objects.toString(exception.getMessage(), "")), false);
+            throw exception;
+        }
         audit.record(actor.enterpriseId(), actor.user(), "credential.create", "credential", id, "创建连接凭据",
             Map.of("kind", input.kind()));
         return summaries.find(actor.enterpriseId(), id, false).orElseThrow();
@@ -89,8 +96,15 @@ public class CredentialService {
             throw new ApiException(HttpStatus.CONFLICT, "CREDENTIAL_REVOKED", "该凭据已撤销，请创建新的凭据。");
         }
         validation.validate(current.kind(), secret);
-        secrets.store(current.id(), actor.enterpriseId(), current.name(), current.kind(),
-            encryption.encrypt(secret, binding(actor, current.id())), actor.userId(), true, clock.instant());
+        try {
+            secrets.store(current.id(), actor.enterpriseId(), current.name(), current.kind(),
+                encryption.encrypt(secret, binding(actor, current.id())), actor.userId(), true, clock.instant());
+        } catch (RuntimeException exception) {
+            audit.record(actor.enterpriseId(), actor.user(), "credential.rotate", "credential", current.id(),
+                "轮换连接凭据失败", Map.of("kind", current.kind(), "error", Objects.toString(exception.getMessage(), "")),
+                false);
+            throw exception;
+        }
         audit.record(actor.enterpriseId(), actor.user(), "credential.rotate", "credential", current.id(),
             "轮换连接凭据", Map.of("kind", current.kind()));
         return summaries.find(actor.enterpriseId(), current.id(), false).orElseThrow();
@@ -104,7 +118,13 @@ public class CredentialService {
                 "仍有可用资源引用此凭据，请先替换引用或停用相关资源。",
                 Map.of("referenceCount", current.referenceCount()), Map.of());
         }
-        summaries.revoke(actor.enterpriseId(), current.id(), actor.userId(), clock.instant());
+        try {
+            summaries.revoke(actor.enterpriseId(), current.id(), actor.userId(), clock.instant());
+        } catch (RuntimeException exception) {
+            audit.record(actor.enterpriseId(), actor.user(), "credential.revoke", "credential", current.id(),
+                "撤销连接凭据失败", Map.of("error", Objects.toString(exception.getMessage(), "")), false);
+            throw exception;
+        }
         audit.record(actor.enterpriseId(), actor.user(), "credential.revoke", "credential", current.id(),
             "撤销未被使用的连接凭据", Map.of());
     }

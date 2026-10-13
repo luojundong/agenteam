@@ -20,6 +20,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -89,7 +90,13 @@ public class TagService {
     public void delete(AuthContext actor, String id, long revision) {
         authorize(actor);
         current(actor, id, revision);
-        tags.delete(actor.enterpriseId(), id, clock.instant());
+        try {
+            tags.delete(actor.enterpriseId(), id, clock.instant());
+        } catch (RuntimeException exception) {
+            audit.record(actor.enterpriseId(), actor.user(), "tag.delete", "tag", id, "删除标签失败",
+                Map.of("error", Objects.toString(exception.getMessage(), "")), false);
+            throw exception;
+        }
         audit.record(actor.enterpriseId(), actor.user(), "tag.delete", "tag", id, "删除标签并解除资源标签关联",
             Map.of());
     }

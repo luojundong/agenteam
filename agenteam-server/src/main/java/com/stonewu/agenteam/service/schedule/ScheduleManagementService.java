@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -103,7 +104,15 @@ public class ScheduleManagementService {
         if (enabled) {
             actions.require(before.actionType(), before.actionSchemaVersion()).validateCurrent(actor, before);
         }
-        schedules.enabled(before, enabled, enabled ? next(before.rule()) : null, clock.instant());
+        try {
+            schedules.enabled(before, enabled, enabled ? next(before.rule()) : null, clock.instant());
+        } catch (RuntimeException exception) {
+            audit.record(actor.enterpriseId(), actor.user(), "schedule.enabled", "schedule", id,
+                enabled ? "启用本人定时任务失败" : "暂停本人计划失败",
+                Map.of("enabled", enabled, "userActivity", userActivity, "error",
+                    Objects.toString(exception.getMessage(), "")), false);
+            throw exception;
+        }
         audit.record(actor.enterpriseId(), actor.user(), "schedule.enabled", "schedule", id,
             enabled ? "启用本人定时任务" : "暂停本人计划的未来触发",
             Map.of("enabled", enabled, "userActivity", userActivity));
@@ -147,7 +156,13 @@ public class ScheduleManagementService {
         if (before.activeOccurrenceId() != null) {
             throw new ApiException(HttpStatus.CONFLICT, "SCHEDULE_BUSY", "此计划还有未结束的任务，请先停止或等待结束。");
         }
-        schedules.delete(before, clock.instant());
+        try {
+            schedules.delete(before, clock.instant());
+        } catch (RuntimeException exception) {
+            audit.record(actor.enterpriseId(), actor.user(), "schedule.delete", "schedule", id, "删除本人定时任务失败",
+                Map.of("userActivity", userActivity, "error", Objects.toString(exception.getMessage(), "")), false);
+            throw exception;
+        }
         audit.record(actor.enterpriseId(), actor.user(), "schedule.delete", "schedule", id, "删除本人已暂停的定时任务",
             Map.of("userActivity", userActivity));
     }

@@ -28,6 +28,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -150,16 +151,24 @@ public class AgentHireService {
         }
         boolean approve = value.decision().equals("approve");
         String reason = ResourceInput.text(value.reason() == null ? "" : value.reason(), "reason", 500, !approve);
-        if (approve) {
-            var user = users.findById(application.userId()).filter(candidate -> candidate.status().equals("active"))
-                .orElseThrow(ResourceAuthorizationService::unavailable);
-            var applicant = new AuthContext(user, actor.enterpriseId(), Set.of());
-            employees.requireAvailable(applicant, application.agentId(), "agent.hire", true);
-            hires.establish(actor.enterpriseId(), user.id(), application.agentId(), clock.instant());
-        }
         var now = clock.instant();
-        applications.finish(application, approve ? "approved" : "rejected", actor.userId(),
-            reason.isEmpty() ? null : reason, now);
+        try {
+            if (approve) {
+                var user = users.findById(application.userId()).filter(candidate -> candidate.status().equals("active"))
+                    .orElseThrow(ResourceAuthorizationService::unavailable);
+                var applicant = new AuthContext(user, actor.enterpriseId(), Set.of());
+                employees.requireAvailable(applicant, application.agentId(), "agent.hire", true);
+                hires.establish(actor.enterpriseId(), user.id(), application.agentId(), clock.instant());
+            }
+            applications.finish(application, approve ? "approved" : "rejected", actor.userId(),
+                reason.isEmpty() ? null : reason, now);
+        } catch (RuntimeException exception) {
+            audit.record(actor.enterpriseId(), actor.user(), "agent.hire.decision", "agent_hire_request", id,
+                "处理雇佣申请失败",
+                Map.of("agentId", application.agentId(), "applicantId", application.userId(), "decision",
+                    value.decision(), "error", Objects.toString(exception.getMessage(), "")), false);
+            throw exception;
+        }
         notifications.decided(application, approve);
         audit.record(actor.enterpriseId(), actor.user(), "agent.hire.decision", "agent_hire_request", id,
             approve ? "批准雇佣申请" : "拒绝雇佣申请",

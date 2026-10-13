@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -58,7 +59,15 @@ public class ResourceOwnershipService {
         policy.editable(resource);
         String ownerId = recipients.requireRecipient(actor.enterpriseId(), recipient, Set.of(resource.kind()),
             "ownerUserId");
-        resources.owner(resource, ownerId, clock.instant());
+        try {
+            resources.owner(resource, ownerId, clock.instant());
+        } catch (RuntimeException exception) {
+            audit.record(actor.enterpriseId(), actor.user(), "resource.owner.transfer", "resource", id,
+                "转交" + resource.kind().label() + "所有权失败",
+                Map.of("kind", resource.kind().code(), "previousOwnerId", resource.ownerUserId(), "ownerUserId",
+                    ownerId, "error", Objects.toString(exception.getMessage(), "")), false);
+            throw exception;
+        }
         enterprises.advancePermissionVersion(actor.enterpriseId());
         events.publishEvent(new EnterprisePermissionChanged(actor.enterpriseId()));
         audit.record(actor.enterpriseId(), actor.user(), "resource.owner.transfer", "resource", id,

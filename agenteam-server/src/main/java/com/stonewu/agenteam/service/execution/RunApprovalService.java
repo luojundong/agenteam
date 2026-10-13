@@ -35,6 +35,7 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 沿用框架暂停和继续语义，只把用户决定及执行资格交给持久事务处理。
@@ -226,7 +227,15 @@ public class RunApprovalService {
                 throw changed();
             }
         }
-        approvals.decide(approval, outcome, input.reason(), clock.instant());
+        try {
+            approvals.decide(approval, outcome, input.reason(), clock.instant());
+        } catch (RuntimeException exception) {
+            audit.record(actor.enterpriseId(), actor.user(), "run.approval." + input.decision(), "run_approval",
+                approval.id(), outcome.equals("approved") ? "同意确认失败" : "拒绝确认失败",
+                Map.of("runId", run.id(), "stepId", approval.stepId(), "error",
+                    Objects.toString(exception.getMessage(), "")), false);
+            throw exception;
+        }
         var saved = approvals.find(actor.enterpriseId(), approval.id(), false).orElseThrow();
         messages.save(run, saved);
         events.append(run, "approval.resolved", saved.view(), clock.instant());
