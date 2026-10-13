@@ -1,0 +1,14 @@
+{
+  "name": "agenteam-sandbox-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "playwright": "1.64.0",
+    "pptxgenjs": "4.0.1"
+  },
+  "overrides": {
+    "pptxgenjs": {
+      "image-size": "2.0.4"
+    }
+  }
+}

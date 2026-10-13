@@ -1,0 +1,97 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits"
+  ],
+  "labels": [
+    "dependencies",
+    "security"
+  ],
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "timezone": "Asia/Shanghai",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 6am on monday"
+    ]
+  },
+  "packageRules": [
+    {
+      "description": "P0 钉版策略：锁定核心框架大版本（Spring Boot 4 / Spring / Next 16 / React 19 / AgentScope 2.0.3），仅允许补丁级跟进，避免上游破坏性变更静默击穿（见 docs/version-strategy.md）。",
+      "matchPackagePatterns": [
+        "^org.springframework.boot:spring-boot.*",
+        "^org.springframework:spring.*",
+        "next",
+        "^react$",
+        "^react-dom$",
+        "@types/react",
+        "@types/react-dom",
+        "io.agentscope:.*"
+      ],
+      "rangeStrategy": "pin",
+      "major": {
+        "enabled": false
+      },
+      "minor": {
+        "enabled": false
+      },
+      "patch": {
+        "enabled": true
+      }
+    },
+    {
+      "description": "P0 安全跟进：安全相关依赖（加密/BouncyCastle、PDFBox、jsoup、AWS SDK、MariaDB 驱动、json-schema-validator）优先自动跟进补丁，快速止血。",
+      "matchPackagePatterns": [
+        "^org.bouncycastle:.*",
+        "^org.apache.pdfbox:.*",
+        "^org.jsoup:.*",
+        "^software.amazon.awssdk:.*",
+        "^org.mariadb.jdbc:.*",
+        "^com.networknt:.*"
+      ],
+      "patch": {
+        "automerge": true
+      },
+      "minor": {
+        "automerge": false
+      }
+    },
+    {
+      "description": "P1 季度评审分组：其余 npm/maven 的补丁与小版本聚合为季度评审分组，统一跟进（不自动合并，保留人工评审）。",
+      "matchManagers": [
+        "npm",
+        "maven"
+      ],
+      "matchUpdateTypes": [
+        "patch",
+        "minor"
+      ],
+      "groupName": "quarterly-deps",
+      "automerge": false
+    },
+    {
+      "description": "GitHub Actions / Dockerfile 单独分组，便于审阅。",
+      "matchManagers": [
+        "github-actions",
+        "dockerfile"
+      ],
+      "groupName": "ci-and-docker"
+    }
+  ],
+  "regexManagers": [
+    {
+      "fileMatch": [
+        "^Dockerfile.*$",
+        "^deploy/.*Dockerfile.*$"
+      ],
+      "matchStrings": [
+        "FROM (?<depName>[^\\s:]+):(?<currentValue>[^\\s]+)"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ]
+}

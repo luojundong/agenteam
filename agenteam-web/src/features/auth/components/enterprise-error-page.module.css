@@ -1,0 +1,178 @@
+.page {
+  display: flex;
+  min-height: 100dvh;
+  padding: 32px 24px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.content {
+  width: min(100%, 460px);
+  min-width: 0;
+  margin: auto;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.body {
+  padding: 32px;
+}
+
+.intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.symbol {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.copy {
+  min-width: 0;
+}
+
+.title {
+  margin: 2px 0 0;
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: -.4px;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.message {
+  margin: 10px 0 0;
+  color: var(--secondary);
+  font-size: 14px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: grid;
+  gap: 16px;
+  margin-top: 28px;
+}
+
+.alternatives {
+  padding-top: 24px;
+  border-top: 1px solid var(--border-light);
+  text-align: left;
+}
+
+.alternatives > label > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--secondary);
+}
+
+.alternatives svg {
+  flex-shrink: 0;
+}
+
+.retry {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+.retry:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.accountActions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  padding: 10px 24px;
+  border-top: 1px solid var(--border-light);
+  border-radius: 0 0 20px 20px;
+  background: var(--surface-soft);
+}
+
+.accountAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  color: var(--secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  text-decoration: none;
+}
+
+.accountAction svg {
+  flex-shrink: 0;
+}
+
+.accountAction:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.accountAction:focus-visible {
+  outline: 2px solid var(--input-border-focus);
+  outline-offset: 3px;
+}
+
+.actionError {
+  margin: 0;
+  padding: 12px 4px 4px;
+  color: var(--red-text);
+  font-size: 13px;
+  line-height: 1.8;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+  .page {
+    padding: 24px 16px;
+  }
+
+  .body {
+    padding: 24px;
+  }
+
+  .intro {
+    gap: 12px;
+  }
+
+  .title {
+    font-size: 20px;
+  }
+
+  .accountActions {
+    gap: 4px 12px;
+    padding-inline: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .retry,
+  .accountAction {
+    transition: none;
+  }
+}
