@@ -221,8 +221,14 @@ public class AnnouncementManagementService {
             .set(AnnouncementRow::getEnabled, false)
             .set(AnnouncementRow::getUpdatedBy, actor.id()).set(AnnouncementRow::getUpdatedAt, clock.instant())
             .setIncrBy(AnnouncementRow::getRevision, 1);
-        checkUpdate(rows.update(update));
-        audit.record(enterprise, actor, "announcement.delete", "announcement", id, "删除公告", Map.of());
+        try {
+            checkUpdate(rows.update(update));
+        } catch (RuntimeException exception) {
+            audit.record(enterprise, actor, "announcement.delete", "announcement", id, "删除公告失败",
+                Map.of("error", Objects.toString(exception.getMessage(), "")), false);
+            throw exception;
+        }
+        audit.record(enterprise, actor, "announcement.delete", "announcement", id, "删除公告", Map.of(), true);
     }
 
     @Transactional
@@ -253,9 +259,16 @@ public class AnnouncementManagementService {
             update.set(AnnouncementRow::getPublicationSequence, published.getSequenceNo())
                 .set(AnnouncementRow::getPublishedAt, published.getPublishedAt());
         }
-        checkUpdate(rows.update(update));
+        try {
+            checkUpdate(rows.update(update));
+        } catch (RuntimeException exception) {
+            audit.record(enterprise, actor, enabled ? "announcement.enable" : "announcement.disable", "announcement", id,
+                (enabled ? "启用公告" : "停用公告") + "失败",
+                Map.of("version", row.getContentVersion(), "error", Objects.toString(exception.getMessage(), "")), false);
+            throw exception;
+        }
         audit.record(enterprise, actor, enabled ? "announcement.enable" : "announcement.disable", "announcement", id,
-            enabled ? "启用公告" : "停用公告", Map.of("version", row.getContentVersion()));
+            enabled ? "启用公告" : "停用公告", Map.of("version", row.getContentVersion()), true);
         return views.view(rows.selectById(id));
     }
 

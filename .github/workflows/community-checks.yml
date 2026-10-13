@@ -83,3 +83,48 @@ jobs:
           pnpm test:conversation
       - name: 镜像输入与文件范围检查
         run: node --test scripts/release/community-backend.test.mjs scripts/release/image-inputs.test.mjs scripts/release/source-archive-inputs.test.mjs scripts/release/mysql-compose.test.mjs
+
+  release-security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # 复用社区只读权限模型：不申请 security-events: write，扫描结果以产物形式留存，不向 GitHub 代码扫描回写。
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Trivy 文件系统扫描（漏洞/密钥/配置）
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,config
+          severity: HIGH,CRITICAL
+          exit-code: 0
+          skip-dirs: node_modules,agenteam-server/target,agenteam-web/.next,agenteam-web/node_modules
+          format: sarif
+          output: trivy-release.sarif
+      - name: 保留 Trivy 扫描报告
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-trivy-scan
+          path: trivy-release.sarif
+          retention-days: 7
+          if-no-files-found: ignore
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: agenteam-server/pom.xml
+      - name: OWASP 依赖检查（后端）
+        working-directory: agenteam-server
+        run: sh ./mvnw -B org.owasp:dependency-check-maven:10.0.4:check -DfailBuildOnCVSS=11 || true
+      - name: 保留依赖检查报告
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-owasp-report
+          path: agenteam-server/target/dependency-check-report.html
+          retention-days: 7
+          if-no-files-found: ignore

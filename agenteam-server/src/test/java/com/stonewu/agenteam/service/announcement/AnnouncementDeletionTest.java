@@ -67,7 +67,17 @@ class AnnouncementDeletionTest {
         var values = update.getValue().getParamNameValuePairs().values();
         assertTrue(values.contains(now));
         assertTrue(values.contains(false));
-        verify(audit).record(null, actor, "announcement.delete", "announcement", row.getId(), "删除公告", Map.of());
+        verify(audit).record(null, actor, "announcement.delete", "announcement", row.getId(), "删除公告", Map.of(), true);
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void recordsFailureAuditWhenDeletionUpdateFails() {
+        when(rows.update(any(LambdaUpdateWrapper.class))).thenThrow(new RuntimeException("database unavailable"));
+        var exception = assertThrows(RuntimeException.class, () -> service.delete(actor, null, true, row.getId(), 7));
+        assertEquals("database unavailable", exception.getMessage());
+        verify(audit).record(eq(null), eq(actor), eq("announcement.delete"), eq("announcement"), eq(row.getId()),
+            eq("删除公告失败"), any(Map.class), eq(false));
     }
 
     @Test

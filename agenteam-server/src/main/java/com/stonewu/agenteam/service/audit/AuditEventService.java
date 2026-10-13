@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stonewu.agenteam.mapper.audit.AuditEventMapper;
 import com.stonewu.agenteam.model.user.entity.UserEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -13,7 +15,8 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * 将明确列出的业务差异写入当前事务，不接受整份请求、密码或用户实体作为详情。
+ * 将明确列出的业务差异写入审计表。审计写入使用独立事务（REQUIRES_NEW），确保即使业务事务回滚，
+ * 审计记录（尤其是失败路径）仍能落库，不被业务异常吞掉。不接受整份请求、密码或用户实体作为详情。
  */
 @Service
 public class AuditEventService {
@@ -28,6 +31,7 @@ public class AuditEventService {
         this.clock = clock;
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(String enterpriseId, UserEntity actor, String action, String objectType,
                        String objectId, String summary, Map<String, ?> detail) {
         record(enterpriseId, actor, action, objectType, objectId, summary, detail, "success");
@@ -36,6 +40,7 @@ public class AuditEventService {
     /**
      * 记录带明确结果的审计；失败路径传入 {@code false}，使 {@code audit_event.result} 反映真实成败。
      */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(String enterpriseId, UserEntity actor, String action, String objectType,
                        String objectId, String summary, Map<String, ?> detail, boolean success) {
         record(enterpriseId, actor, action, objectType, objectId, summary, detail, success ? "success" : "failure");
