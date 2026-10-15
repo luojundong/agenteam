@@ -100,48 +100,6 @@ jobs:
       - name: 构建对象存储测试服务镜像
         working-directory: .
         run: docker build --tag agenteam/test-minio:2025-09-07-07c3a429 agenteam-server/src/test/resources/containers/minio
-      # —— 临时诊断步骤（定位后移除）——
-      # 后端全量测试需 60+ 分钟，为快速拿到 AuditEventApiTest 的上下文加载根因，
-      # 先单独跑这一个用例并把结果写成注解；continue-on-error 保证不影响门禁结论。
-      - name: 诊断：单独运行 AuditEventApiTest
-        continue-on-error: true
-        run: ./mvnw -B test -Dtest=AuditEventApiTest -DfailIfNoTests=false
-      - name: 诊断：输出 AuditEventApiTest 失败根因
-        if: always()
-        run: |
-          python3 - <<'PY'
-          import glob, os, re, xml.etree.ElementTree as ET
-
-          def emit(text):
-              text = re.sub(r"\s+", " ", text or "").strip()
-              print(f"::error::DIAG {text[:1400]}")
-
-          files = sorted(glob.glob('target/surefire-reports/*AuditEventApiTest*.xml'))
-          emit(f"report files: {[os.path.basename(f) for f in files]}")
-          touched = 0
-          for path in files:
-              root = ET.parse(path).getroot()
-              emit(f"{os.path.basename(path)} tests={root.get('tests')} failures={root.get('failures')} errors={root.get('errors')}")
-              for case in root.iter('testcase'):
-                  for child in case:
-                      if child.tag not in ('failure', 'error'):
-                          continue
-                      touched += 1
-                      body = [b.strip() for b in (child.text or '').strip().splitlines() if b.strip()]
-                      emit(f"{case.get('classname')} | {(child.get('message') or '')[:300]}")
-                      caused = [b for b in body if b.startswith('Caused by')][:10]
-                      for c in caused:
-                          emit(f"CAUSED: {c}")
-                      at = [b for b in body if '.java:' in b][:5]
-                      if at:
-                          emit(f"AT: {' // '.join(at)}")
-                      if not caused:
-                          emit(f"STACK: {' // '.join(body[:12])}")
-          if touched == 0:
-              # 单独运行没有失败条目：说明该类只在完整套件里失败，问题与执行顺序或资源累积有关
-              emit("单独运行无失败条目（通过或未生成报告），属套件内失败")
-          PY
-      # —— 临时诊断步骤结束 ——
       - name: 后端编译与测试
         run: ./mvnw -B test
       # 作业日志需要管理员权限才能下载，失败原因无法从外部读取；
