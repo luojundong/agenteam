@@ -1,6 +1,5 @@
 package com.stonewu.agenteam.configuration.security;
 
-import com.stonewu.agenteam.service.http.ApiException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.mock.env.MockEnvironment;
@@ -10,7 +9,9 @@ import java.security.SecureRandom;
 import java.util.Base64;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProductionSettingsValidationTest {
     @TempDir
@@ -36,11 +37,38 @@ class ProductionSettingsValidationTest {
 
     @Test
     void acceptsGeneratedKeysAndRejectsInvalidServiceSettings() {
-        assertDoesNotThrow(() -> new ProductionSettingsValidation(environment(), new ApplicationSecretKeys("", "", "1", directory.resolve("keys.properties").toString())));
-        assertThrows(ApiException.class, () -> new ProductionSettingsValidation(environment()
+        var generated = new ApplicationSecretKeys("", "", "1", directory.resolve("keys.properties").toString());
+        assertDoesNotThrow(() -> new ProductionSettingsValidation(environment(), generated));
+        // 清单化的目的是一次报出全部问题，因此配置错误统一走启动期异常，
+        // 不再让某一项单独抛出「服务不可用」。
+        assertThrows(IllegalArgumentException.class, () -> new ProductionSettingsValidation(environment()
             .withProperty("agenteam.mail.from", "not-an-address"), keys()));
         assertDoesNotThrow(() -> new ProductionSettingsValidation(environment()
             .withProperty("files.storage", "local"), keys()));
+    }
+
+    @Test
+    void reportsEveryProblemAtOnce() {
+        var broken = environment().withProperty("agenteam.web.public-base-url", "http://agenteam.example.test")
+            .withProperty("server.servlet.session.cookie.secure", "false")
+            .withProperty("server.tomcat.remoteip.internal-proxies", "10.0.0.0/8")
+            .withProperty("agenteam.mail.from", "not-an-address");
+        var message = assertThrows(IllegalArgumentException.class,
+            () -> new ProductionSettingsValidation(broken, keys())).getMessage();
+        assertTrue(message.contains("共 4 项"), message);
+        assertTrue(message.contains(ProductionSettingsValidation.Check.PUBLIC_ORIGIN.name()), message);
+        assertTrue(message.contains(ProductionSettingsValidation.Check.SESSION_COOKIE.name()), message);
+        assertTrue(message.contains(ProductionSettingsValidation.Check.TRUSTED_PROXIES.name()), message);
+        assertTrue(message.contains(ProductionSettingsValidation.Check.MAIL_FROM.name()), message);
+    }
+
+    @Test
+    void marksKeysThatCameFromTheLocalMachine() {
+        var generated = new ApplicationSecretKeys("", "", "1", directory.resolve("generated.properties").toString());
+        assertTrue(generated.generatedLocally(), "未注入密钥时应标记为本机生成");
+        assertFalse(keys().generatedLocally(), "注入密钥后不应再使用本机文件");
+        assertDoesNotThrow(() -> new LocalSecretKeyNotice(generated));
+        assertDoesNotThrow(() -> new LocalSecretKeyNotice(keys()));
     }
 
     @Test

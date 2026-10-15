@@ -25,6 +25,11 @@ public class ApplicationSecretKeys {
 
     private final String activeVersion;
 
+    /**
+     * 是否有任一密钥取自本机文件，而不是由部署注入。
+     */
+    private final boolean generatedLocally;
+
     public ApplicationSecretKeys(@Value("${agenteam.security.request-signing-key:}") String signingKey,
                                  @Value("${agenteam.security.encryption-keys:}") String configuredKeys,
                                  @Value("${agenteam.security.active-encryption-key:1}") String activeVersion,
@@ -34,7 +39,9 @@ public class ApplicationSecretKeys {
         }
         SecretKey signing = signingKey.isBlank() ? null : decode(signingKey, "HmacSHA256");
         Map<String, SecretKey> keys = decodeEncryptionKeys(configuredKeys, activeVersion);
+        boolean fromFile = false;
         if (signing == null || keys.isEmpty()) {
+            fromFile = true;
             var generated = ApplicationSecretKeyFile.loadOrCreate(keysFile, activeVersion);
             if (signing == null) {
                 signing = decode(generated.signingKey(), "HmacSHA256");
@@ -46,6 +53,15 @@ public class ApplicationSecretKeys {
         requestKey = signing;
         encryptionKeys = Map.copyOf(keys);
         this.activeVersion = activeVersion;
+        this.generatedLocally = fromFile;
+    }
+
+    /**
+     * 是否有任一密钥来自本机文件。这类密钥与数据同机保存、无备份、不可跨实例共用，
+     * 只适用于本地开发；生产必须外部注入。
+     */
+    public boolean generatedLocally() {
+        return generatedLocally;
     }
 
     private Map<String, SecretKey> decodeEncryptionKeys(String configuredKeys, String activeVersion) {

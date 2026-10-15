@@ -31,8 +31,8 @@
 | --- | --- | --- | --- | --- |
 | **P2-A** | 审计防篡改哈希链 | P0 | `audit_event` 增 `prev_hash`/`hash`，append 时串联 | ✅ 已完成（`5449126`，CI 全绿） |
 | **P2-B** | 跨租户越权修复 | P0 | 把作用域条件推进 SQL 层 | ✅ 已完成（公告 `lock` 实修 / 幂等完成加固；邀请 token 经复核成立受控、书面豁免） |
-| **P2-C** | 生产强校验清单化 | P1 | 扩大 fail-fast 覆盖面 + 上线清单文档 | 待开始 |
-| **P2-D** | 出站 SSRF 盲区补齐 | P1 | `IntegrationHttpClient` / Sandbox 接入 `OutboundAddressPolicy` | 待开始 |
+| **P2-C** | 生产强校验清单化 | P1 | 7 项抽清单 + 一次报全部 + 非生产密钥告警 | ✅ 已完成（清单文档 `docs/deployment/production-checklist.md`） |
+| **P2-D** | 出站 SSRF 盲区补齐 | P1 | 全量出站通道复核 | ✅ 已复核：8 个出站点无一为租户可控盲区，书面豁免 + 未来约束登记 |
 | **P2-E** | 凭据密钥托管强化 | P1 | 禁止生产自动落盘、备份恢复、轮换 | 待开始 |
 | **P2-F** | 多租户机制化隔离 | P2 | 评估 `TenantLineInnerInterceptor` + 全局任务豁免清单 | 待开始 |
 
@@ -131,13 +131,34 @@ hash      = SHA-256( nullToMarker(prevHash) + '|' + canonical )
 
 **新增验收测试**：`TenantScopeIsolationTest`（真实 MySQL，4 例）——企业公告仅本企业可锁定、平台公告对所有企业可见但不属于任何企业、已删除公告永不可锁定、幂等完成限定在本作用域。其中「本企业必须能锁定」是**防止 SQL 条件写反导致管理端全线 404** 的正面用例。
 
-**P2-C 生产强校验清单化**
-- 将 `ProductionSettingsValidation` 的 7 项抽取为清单；对**非生产环境也强制**校验密钥类配置（`AGENTEAM_ENCRYPTION_KEYS`、`AGENTEAM_REQUEST_SIGNING_KEY`），避免"本地能跑、上线炸"。
-- 输出 `docs/deployment/production-checklist.md`。
+**P2-C 生产强校验清单化**（已完成）
+- `ProductionSettingsValidation` 的 7 项抽为 `Check` 枚举，**一次报出全部问题**（此前遇到第一项即抛，运维修一项跑一轮）。清单与 `docs/deployment/production-checklist.md` 一一对应。
+- 非生产环境新增 `LocalSecretKeyNotice`：密钥来自本机文件而非注入时启动打印 WARN（"本地能跑、上线炸"——换机/重建容器后旧密钥写入的内容解不开）。
+- 一处有意的行为变更：`agenteam.mail.from` 非法原本抛 `ApiException`（503），清单化后统一走启动期 `IllegalArgumentException`，否则它会单独打断汇总、看不到其余问题。
+- **未新增校验项**，两处经查证不该加：`AGENTEAM_MAIL_USERNAME/PASSWORD` 等在生产 yaml 里无默认值，占位符未解析即启动失败，已隐式强制；`AGENTEAM_SETUP_CREDENTIAL` 未配置时会生成随机值且只在日志显示一次（不落盘），比长期不变的弱配置凭据更安全，强制配置反而会破坏这个设计。
+- 生产是否**拒绝**自动生成落盘密钥留给 P2-E（连同备份与轮换一起定），不在本项扩大拒绝面。
 
-**P2-D 出站盲区**
-- `IntegrationHttpClient`：渠道地址来自配置/平台常量，需接入 `OutboundAddressPolicy` 或给出书面豁免 + 补偿控制（配置白名单校验）。
-- `RemoteSandboxExecutor` 系列：已有 https/token 校验，缺 IP 层私网校验，需评估沙盒出网由 `SANDBOX_NETWORK` 控制是否足够。
+**P2-D 出站 SSRF 盲区补齐**（已复核，结论为书面豁免、不改代码）
+
+全量扫描了应用侧所有出站通道（不是只查计划里列的两处）：`new OkHttpClient` 3 处、`HttpRequest.newBuilder` 3 处、`new Socket` 2 处、Spring `RestTemplate/WebClient/RestClient` 0 处。
+
+| 出站点 | 地址来源 | 出站策略 | 判定 |
+| --- | --- | --- | --- |
+| `RestrictedHttpClient` | 网页浏览 / MCP 插件地址（用户可填） | 本身就是策略封装 | ✅ |
+| `RemoteModelClient` | 模型服务地址 | 已注入 `OutboundAddressPolicy` | ✅ |
+| `PinnedMysqlSocketFactory` | 数据库地址 | 经 `DatabaseAddressPolicy` | ✅ |
+| `IntegrationHttpClient` | `IntegrationEndpoints` 编译期常量 + 硬编码官方地址 | ❌ 未接入 | 书面豁免 |
+| 沙盒 `RemoteSandboxExecutor` / `RemoteProjectCommandExecutor` / `RemoteSandboxContainerCleanup` | `execution.sandbox.remote-endpoint`（运维配置） | ❌ 未接入，但已有 https（或 http+loopback）+ token ≥32 位校验 | 书面豁免 |
+| `ClamAvScanService` | `files.scan.host`（运维配置） | ❌ 未接入 | 书面豁免 |
+
+**豁免理由**
+- `IntegrationHttpClient` 的地址**不由租户或管理员控制**：`IntegrationEndpoints` 的类注释明确"生产固定官方服务地址；测试通过构造器注入模拟服务器，不开放管理员自定义服务地址"，三个官方地址在 `@Autowired` 无参构造里硬编码，也不在 `application.yaml` 暴露。真正能防住 SSRF 的是"地址不可配置"这一条，比事后校验更有效。
+- 三个沙盒远程执行器调用的是**运维配置的沙盒 API**，不是容器内代码的出网；容器自己的出网由 `AGENTEAM_SANDBOX_NETWORK`（默认 `none`）在**网络层**隔离，强于应用层的 IP 校验。
+- `ClamAvScanService` 走的是 INSTREAM 裸 TCP，不适用基于 HTTP URL 的策略；地址同为运维配置。
+
+**未接入策略的成本收益**：给 `IntegrationHttpClient` 接策略需要把测试用的 mock server（`http://127.0.0.1`）加进 `network.allowed-private-origins`，会牵动一批集成测试；而官方地址本身是 HTTPS，证书校验已覆盖"域名被劫持"这一场景。收益不足以抵消改动面。
+
+**未来约束**：若哪天开放管理员自定义渠道地址（`IntegrationEndpoints` 改为可配置），**必须先接入 `OutboundAddressPolicy`**，这条豁免随之失效。已在此登记。
 
 **P2-E 凭据密钥**
 - 现状：密钥缺失时自动生成并落盘应用目录（与 DB 同机）、无备份、无自动轮换。
