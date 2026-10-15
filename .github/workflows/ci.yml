@@ -77,9 +77,9 @@ jobs:
   backend:
     name: 后端构建与测试 (Maven)
     runs-on: ubuntu-latest
-    # 189 个测试类、每个数据库测试都会新建库并跑一遍全量 Flyway 迁移，实测 60~90 分钟；
-    # 上限设为 150 分钟，避免异常挂起时长期占用 runner。
-    timeout-minutes: 150
+    # 189 个测试类、每个数据库测试都会新建库并跑一遍全量 Flyway 迁移，实测 60~150 分钟；
+    # 上限设为 240 分钟，避免异常挂起时长期占用 runner，也避免正常慢跑被误杀。
+    timeout-minutes: 240
     defaults:
       run:
         working-directory: agenteam-server
