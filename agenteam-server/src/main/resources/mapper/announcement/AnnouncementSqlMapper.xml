@@ -1,7 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.stonewu.agenteam.mapper.announcement.AnnouncementSqlMapper">
-  <select id="lock" resultType="com.stonewu.agenteam.model.announcement.entity.AnnouncementRow">
-    SELECT * FROM announcement WHERE id = #{id} FOR UPDATE
+  <!--
+    锁定前先限定可见范围，而不是「先按编号锁定、再由服务层判归属」。
+    后者虽然最终也会拒绝，但在拒绝之前的这段时间里，本事务所持的行锁属于别的企业的记录：
+    持有任意企业公告编号的一方可以反复调用，长时间阻塞该企业的正常修改。
+  -->
+  <select id="lockOwned" resultType="com.stonewu.agenteam.model.announcement.entity.AnnouncementRow">
+    SELECT * FROM announcement WHERE id = #{id} AND deleted_at IS NULL
+    <choose>
+      <when test="enterpriseId != null">AND enterprise_id = #{enterpriseId}</when>
+      <otherwise>AND enterprise_id IS NULL</otherwise>
+    </choose>
+    FOR UPDATE
+  </select>
+  <select id="lockVisible" resultType="com.stonewu.agenteam.model.announcement.entity.AnnouncementRow">
+    SELECT * FROM announcement WHERE id = #{id} AND deleted_at IS NULL
+    AND (scope = 'platform' OR enterprise_id = #{enterpriseId}) FOR UPDATE
   </select>
 </mapper>

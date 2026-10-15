@@ -44,17 +44,23 @@ public interface ApiRequestMapper extends MPJBaseMapper<ApiRequestRow> {
                                           @Param("operationHash") String operationHash,
                                           @Param("keyHash") String keyHash);
 
-    default void complete(String id, int status, String responseJson, Instant now) {
-        if (completeProcessing(id, status, responseJson, now) != 1) {
+    /**
+     * 幂等记录编号由服务端随机生成，外部无从指定，但完成条件仍补上企业与操作者：
+     * 一旦编号因缺陷被猜到或复用，也不会写到别的租户留下的记录上。
+     */
+    default void complete(String id, String enterpriseId, String userId, int status, String responseJson, Instant now) {
+        if (completeProcessing(id, enterpriseId, userId, status, responseJson, now) != 1) {
             throw new IllegalStateException("请求完成记录未能保存，当前事务不能提交");
         }
     }
 
-    default int completeProcessing(String id, int status,
+    default int completeProcessing(String id, String enterpriseId, String userId, int status,
                                    String responseJson, Instant now) {
         return update(new LambdaUpdateWrapper<ApiRequestRow>().eq(ApiRequestRow::getId, id)
-            .eq(ApiRequestRow::getStatus, "processing").set(ApiRequestRow::getStatus, "completed")
-            .set(ApiRequestRow::getHttpStatus, status).set(ApiRequestRow::getResponseJson, responseJson)
-            .set(ApiRequestRow::getUpdatedAt, now));
+            .eq(ApiRequestRow::getStatus, "processing")
+            .eq(enterpriseId != null, ApiRequestRow::getEnterpriseId, enterpriseId)
+            .isNull(enterpriseId == null, ApiRequestRow::getEnterpriseId).eq(ApiRequestRow::getUserId, userId)
+            .set(ApiRequestRow::getStatus, "completed").set(ApiRequestRow::getHttpStatus, status)
+            .set(ApiRequestRow::getResponseJson, responseJson).set(ApiRequestRow::getUpdatedAt, now));
     }
 }

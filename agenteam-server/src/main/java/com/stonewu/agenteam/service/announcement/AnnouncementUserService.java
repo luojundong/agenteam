@@ -84,9 +84,9 @@ public class AnnouncementUserService {
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public AnnouncementUnreadView read(AuthContext actor, String id, long version) {
-        var row = announcements.lock(id);
-        if (row == null || row.getDeletedAt() != null || !row.getEnabled() || (!"platform".equals(
-            row.getScope()) && !actor.enterpriseId().equals(row.getEnterpriseId()))) {
+        // 可见范围由 SQL 先行限定：本企业公告，或不限企业的平台公告。
+        var row = announcements.lockVisible(actor.enterpriseId(), id);
+        if (row == null || !row.getEnabled()) {
             throw new ApiException(HttpStatus.NOT_FOUND, "ANNOUNCEMENT_UNAVAILABLE", "此公告已停用或无法访问。");
         }
         if (row.getContentVersion() != version) {

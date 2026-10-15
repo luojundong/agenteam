@@ -54,7 +54,7 @@ class AnnouncementDeletionTest {
         row.setScope("platform");
         row.setEnabled(true);
         row.setRevision(7L);
-        when(rows.lock(row.getId())).thenReturn(row);
+        when(rows.lockOwned(any(), any())).thenReturn(row);
     }
 
     @Test
@@ -93,7 +93,7 @@ class AnnouncementDeletionTest {
         var ordinary = new UserEntity(actor.id(), "member", "", "成员", "active", false, null, null, null, 1, null, 1, now, now);
         when(users.findById(actor.id())).thenReturn(Optional.of(ordinary));
         assertEquals(403, assertThrows(ApiException.class, () -> service.delete(ordinary, null, true, row.getId(), 7)).getStatusCode().value());
-        verify(rows, never()).lock(any());
+        verify(rows, never()).lockOwned(any(), any());
     }
 
     @Test

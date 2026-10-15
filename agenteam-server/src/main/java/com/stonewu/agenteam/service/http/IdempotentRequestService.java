@@ -93,7 +93,8 @@ public class IdempotentRequestService {
         authorize.run();
         ApiOperationResult result = action.get();
         try {
-            requests.complete(id, result.status(), json.writeValueAsString(result.data()), clock.instant());
+            requests.complete(id, enterpriseId, actor.id(), result.status(), json.writeValueAsString(result.data()),
+                clock.instant());
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("请求结果无法保存，当前变更未提交", exception);
         }

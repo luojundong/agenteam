@@ -29,8 +29,8 @@
 
 | ID | 任务 | 优先级 | 关键内容 | 状态 |
 | --- | --- | --- | --- | --- |
-| **P2-A** | 审计防篡改哈希链 | P0 | `audit_event` 增 `prev_hash`/`hash`，append 时串联 | 设计中 |
-| **P2-B** | 跨租户越权修复 | P0 | `Invitation` token 查询、`ApiRequest` 幂等更新 | 待开始 |
+| **P2-A** | 审计防篡改哈希链 | P0 | `audit_event` 增 `prev_hash`/`hash`，append 时串联 | ✅ 已完成（`5449126`，CI 全绿） |
+| **P2-B** | 跨租户越权修复 | P0 | 把作用域条件推进 SQL 层 | ✅ 已完成（公告 `lock` 实修 / 幂等完成加固；邀请 token 经复核成立受控、书面豁免） |
 | **P2-C** | 生产强校验清单化 | P1 | 扩大 fail-fast 覆盖面 + 上线清单文档 | 待开始 |
 | **P2-D** | 出站 SSRF 盲区补齐 | P1 | `IntegrationHttpClient` / Sandbox 接入 `OutboundAddressPolicy` | 待开始 |
 | **P2-E** | 凭据密钥托管强化 | P1 | 禁止生产自动落盘、备份恢复、轮换 | 待开始 |
@@ -113,8 +113,23 @@ hash      = SHA-256( nullToMarker(prevHash) + '|' + canonical )
 ## 4. 其余任务要点
 
 **P2-B 跨租户越权**
-- `InvitationSqlMapper.findByHashEnterpriseInvitation` 当前**仅按 `token_hash` 全局查询**，是最明确的跨租户入口。邀请 token 本身全局唯一，因此不能简单加 `WHERE enterprise_id`——正确做法是**先全局定位、再校验该邀请所属企业与当前上下文一致**，不一致则拒绝。
-- `ApiRequestMapper.completeProcessing`：幂等记录更新无租户条件，需补 `enterprise_id`。
+
+> 已按条目复核三个入口，结论与原计划有出入，见下表。
+
+| 入口 | 原判断 | 复核结论 | 处置 |
+| --- | --- | --- | --- |
+| `AnnouncementSqlMapper.lock(id)` | 未列入 | **真实缺陷**：`SELECT * FROM announcement WHERE id = ? FOR UPDATE` 不带作用域，服务层在**加锁之后**才比对归属。虽然最终也会拒绝，但拒绝之前本事务已经持有了别的企业记录的行锁 → 可反复调用阻塞该企业正常修改 | ✅ 已修：拆为 `lockOwned`（严格归属）/ `lockVisible`（含平台公告），作用域条件进入 SQL |
+| `ApiRequestMapper.completeProcessing` | 需补 `enterprise_id` | 编号由服务端随机生成（`UUID.randomUUID()`），外部无从指定，原判断的越权路径不成立；但缺作用域条件属于纵深防御缺失 | ✅ 已修：补 `enterprise_id`（空值走 `IS NULL` 分支）+ `user_id` |
+| `InvitationSqlMapper.findByHashEnterpriseInvitation` | 最明确的跨租户入口 | **不成立**：接受邀请者本来就位于企业之外，没有可用的企业上下文可比对；且 `token_hash` 有唯一键 `uk_enterprise_invitation_2`，查询最多一行；后续 `matchEmail` 强制邮箱一致、`lock()` 内 `requireMembershipChange` + `lockEnterprise` 已限定企业 | 书面豁免，不改代码 |
+
+**扫描方法与覆盖范围**：对 70 个 MyBatis XML（162 条 select/update/delete，先展开 `<include>` 片段再判定）与 208 处 `LambdaQueryWrapper` 全量筛查，列出不含 `enterprise_id` 的语句后逐条人工定性。其余 25 条均属于以下三类，**无需改动**：
+- 全局身份表（`app_user` / `auth_token`）：以用户而非企业划分；
+- 后台基础设施扫描（`background_job` / `api_request` 保留 / `agent_run` 聚合 / 运维大盘）：无企业维度，已在 P2-F 豁免清单登记；
+- 企业主键本身（`enterprise`）：`enterprise_id` 即租户键。
+
+**扫描踩到的坑**：`<include refid>` 引用的 `<sql>` 片段不在语句元素内部，直接序列化语句会漏掉其中的租户条件，把 `todo_item`、`resource` 误判为越权（二者实际经由 `access` / `visible` 片段带 `enterprise_id`）。必须先把片段内联再判定。
+
+**新增验收测试**：`TenantScopeIsolationTest`（真实 MySQL，4 例）——企业公告仅本企业可锁定、平台公告对所有企业可见但不属于任何企业、已删除公告永不可锁定、幂等完成限定在本作用域。其中「本企业必须能锁定」是**防止 SQL 条件写反导致管理端全线 404** 的正面用例。
 
 **P2-C 生产强校验清单化**
 - 将 `ProductionSettingsValidation` 的 7 项抽取为清单；对**非生产环境也强制**校验密钥类配置（`AGENTEAM_ENCRYPTION_KEYS`、`AGENTEAM_REQUEST_SIGNING_KEY`），避免"本地能跑、上线炸"。

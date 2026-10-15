@@ -273,8 +273,9 @@ public class AnnouncementManagementService {
     }
 
     private AnnouncementRow require(String enterprise, String id, long revision) {
-        var row = rows.lock(id);
-        if (row == null || row.getDeletedAt() != null || !Objects.equals(enterprise, row.getEnterpriseId())) {
+        // 归属由 SQL 先行限定；这里再核对一次，作为锁可见时被绕过的兜底。
+        var row = rows.lockOwned(enterprise, id);
+        if (row == null || !Objects.equals(enterprise, row.getEnterpriseId())) {
             throw missing();
         }
         if (row.getRevision() != revision) {
