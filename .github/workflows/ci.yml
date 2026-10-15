@@ -125,7 +125,7 @@ jobs:
           pnpm audit --audit-level=high
 
       - name: Trivy 文件系统扫描（依赖 CVE + 密钥 + 配置误用）
-        uses: aquasecurity/trivy-action@6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5 # v0.30.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: "fs"
           scan-ref: "."
@@ -135,10 +135,8 @@ jobs:
           output: "trivy.sarif"
           ignore-unfixed: true
           # 跳过前端依赖树与构建产物，避免噪声淹没信号。
-          skip-dirs: |
-            agenteam-web/node_modules
-            **/target
-            .git
+          # Trivy 期望逗号分隔路径，写成多行块会被当成单个含换行的路径而失效。
+          skip-dirs: "agenteam-web/node_modules,**/target,.git"
 
       - name: 上传 Trivy 结果到代码扫描
         if: always()
