@@ -1,3 +1,28 @@
 allowBuilds:
   sharp: false
   unrs-resolver: false
+# 已评估但暂无可用修复版本的公告。豁免需写明理由与解除条件，禁止无注释豁免。
+auditConfig:
+  ignoreGhsas:
+    # braces GHSA-vfj7-8cjw-p6xm（栈耗尽 DoS）：公告声明修复版本 >=3.0.4，
+    # 但 npm 上 braces 最新发布版仍为 3.0.3（2024-05-21），修复版尚未发布，无法通过升级解决。
+    # 传递路径仅来自 shadcn CLI(开发期) 的 fast-glob>micromatch>braces，不进入运行时产物。
+    # 解除条件：braces 发布 >=3.0.4 后移除本豁免并升级。
+    - GHSA-vfj7-8cjw-p6xm
+minimumReleaseAgeExclude:
+  - next@16.3.8
+  - sharp@0.35.5
+  - js-yaml@4.3.2
+  - brace-expansion@1.1.21 || 2.1.7 || 5.0.12
+  - source-map-js@1.2.2
+  - '@modelcontextprotocol/sdk@1.31.0'
+# 收敛传递依赖的高危 CVE。键为「包名@受影响区间」，值为修复版本；
+# 同一包按大版本区间各留一条，避免多区间选择器相互覆盖。
+overrides:
+  '@modelcontextprotocol/sdk': ^1.31.0
+  brace-expansion@<2: ^1.1.21
+  brace-expansion@>=2 <3: ^2.1.7
+  brace-expansion@>=4 <6: ^5.0.12
+  js-yaml: ^4.3.2
+  sharp: ^0.35.5
+  source-map-js: ^1.2.2

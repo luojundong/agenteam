@@ -42,7 +42,7 @@
     "clsx": "^2.1.1",
     "cn": "0.3.0",
     "iconsax-reactjs": "0.0.8",
-    "next": "16.3.2",
+    "next": "16.3.8",
     "ogl": "1.0.11",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -59,7 +59,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.3.2",
+    "eslint-config-next": "16.3.8",
     "prettier": "3.9.9",
     "tailwindcss": "^4",
     "typescript": "^5.1.3"
