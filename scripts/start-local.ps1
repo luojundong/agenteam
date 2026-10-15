@@ -22,8 +22,8 @@ function Wait-Port($port, $sec=30) {
   }
   return $false
 }
-function Start-Bg($name, $exe, $args) {
-  $p = Start-Process -FilePath $exe -ArgumentList $args -WindowStyle Hidden -PassThru
+function Start-Bg($name, $exe, $argList) {
+  $p = Start-Process -FilePath $exe -ArgumentList $argList -WindowStyle Hidden -PassThru
   Write-Host "[$name] pid=$($p.Id) started"
   return $p
 }
