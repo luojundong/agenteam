@@ -273,9 +273,10 @@ public class AnnouncementManagementService {
     }
 
     private AnnouncementRow require(String enterprise, String id, long revision) {
-        // 归属由 SQL 先行限定；这里再核对一次，作为锁可见时被绕过的兜底。
+        // 归属与删除状态由 SQL 先行限定；这里再核对一次，作为兜底：
+        // 记录仍可能经由别的通道（或被打桩的映射层）送到这里。
         var row = rows.lockOwned(enterprise, id);
-        if (row == null || !Objects.equals(enterprise, row.getEnterpriseId())) {
+        if (row == null || row.getDeletedAt() != null || !Objects.equals(enterprise, row.getEnterpriseId())) {
             throw missing();
         }
         if (row.getRevision() != revision) {

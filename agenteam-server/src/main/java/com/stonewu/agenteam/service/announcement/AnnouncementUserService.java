@@ -84,9 +84,10 @@ public class AnnouncementUserService {
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public AnnouncementUnreadView read(AuthContext actor, String id, long version) {
-        // 可见范围由 SQL 先行限定：本企业公告，或不限企业的平台公告。
+        // 可见范围由 SQL 先行限定：本企业公告，或不限企业的平台公告；
+        // 删除与启用状态仍在这里复核，SQL 过滤是提前拦、这里是兜底。
         var row = announcements.lockVisible(actor.enterpriseId(), id);
-        if (row == null || !row.getEnabled()) {
+        if (row == null || row.getDeletedAt() != null || !row.getEnabled()) {
             throw new ApiException(HttpStatus.NOT_FOUND, "ANNOUNCEMENT_UNAVAILABLE", "此公告已停用或无法访问。");
         }
         if (row.getContentVersion() != version) {
