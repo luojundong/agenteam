@@ -1,12 +1,16 @@
 package com.stonewu.agenteam.controller.audit;
 
 import com.stonewu.agenteam.mapper.audit.AuditEventMapper;
+import com.stonewu.agenteam.support.InvitationHttpTestEnvironment;
 import com.stonewu.agenteam.support.SharedEnterpriseTestEdition;
 import com.stonewu.agenteam.support.execution.ExecutionApiTestSupport;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpMethod;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
@@ -27,8 +31,22 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import(SharedEnterpriseTestEdition.class)
 class AuditEventApiTest extends ExecutionApiTestSupport {
 
+    private static final InvitationHttpTestEnvironment ENVIRONMENT = new InvitationHttpTestEnvironment();
+
     @Autowired
     private AuditEventMapper audit;
+
+    // 测试默认数据源指向不可连接地址（127.0.0.1:1），需要数据库的类必须显式注入隔离库，
+    // 否则应用上下文在 Flyway 初始化阶段就连不上库而加载失败。
+    @DynamicPropertySource
+    static void dependencies(DynamicPropertyRegistry registry) {
+        ENVIRONMENT.properties(registry);
+    }
+
+    @AfterAll
+    void closeEnvironment() throws Exception {
+        ENVIRONMENT.close();
+    }
 
     @Test
     void enterpriseAdminCanListAuditEvents() throws Exception {
