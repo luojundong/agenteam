@@ -244,6 +244,9 @@
           <forkCount>1</forkCount>
           <reuseForks>false</reuseForks>
           <argLine>-Xmx2g</argLine>
+          <!-- 默认会裁剪堆栈并丢弃 Caused by 链，而 CI 只能读取注解文本，
+               上下文加载失败等问题的真实根因恰好在 Caused by 里，必须保留完整堆栈。 -->
+          <trimStackTrace>false</trimStackTrace>
         </configuration>
       </plugin>
       <plugin>

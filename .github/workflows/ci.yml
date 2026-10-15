@@ -110,27 +110,36 @@ jobs:
         if: always()
         run: |
           python3 - <<'PY'
-          import glob, re, xml.etree.ElementTree as ET
+          import glob, os, re, xml.etree.ElementTree as ET
 
           def emit(text):
               text = re.sub(r"\s+", " ", text or "").strip()
-              print(f"::error::DIAG {text[:900]}")
+              print(f"::error::DIAG {text[:1400]}")
 
-          for path in sorted(glob.glob('target/surefire-reports/*AuditEventApiTest*.xml')):
+          files = sorted(glob.glob('target/surefire-reports/*AuditEventApiTest*.xml'))
+          emit(f"report files: {[os.path.basename(f) for f in files]}")
+          touched = 0
+          for path in files:
               root = ET.parse(path).getroot()
+              emit(f"{os.path.basename(path)} tests={root.get('tests')} failures={root.get('failures')} errors={root.get('errors')}")
               for case in root.iter('testcase'):
                   for child in case:
                       if child.tag not in ('failure', 'error'):
                           continue
+                      touched += 1
                       body = [b.strip() for b in (child.text or '').strip().splitlines() if b.strip()]
                       emit(f"{case.get('classname')} | {(child.get('message') or '')[:300]}")
-                      caused = [b for b in body if b.startswith('Caused by')][:8]
-                      if caused:
-                          for c in caused:
-                              emit(f"CAUSED: {c}")
+                      caused = [b for b in body if b.startswith('Caused by')][:10]
+                      for c in caused:
+                          emit(f"CAUSED: {c}")
                       at = [b for b in body if '.java:' in b][:5]
                       if at:
                           emit(f"AT: {' // '.join(at)}")
+                      if not caused:
+                          emit(f"STACK: {' // '.join(body[:12])}")
+          if touched == 0:
+              # 单独运行没有失败条目：说明该类只在完整套件里失败，问题与执行顺序或资源累积有关
+              emit("单独运行无失败条目（通过或未生成报告），属套件内失败")
           PY
       # —— 临时诊断步骤结束 ——
       - name: 后端编译与测试
@@ -141,18 +150,27 @@ jobs:
         if: failure()
         run: |
           python3 - <<'PY'
-          import glob, re, xml.etree.ElementTree as ET
+          import glob, os, re, subprocess, xml.etree.ElementTree as ET
 
           def emit(text):
               # 注解里换行会截断输出，统一压成单行
               text = re.sub(r"\s+", " ", text or "").strip()
-              print(f"::error::{text[:900]}")
+              print(f"::error::{text[:1400]}")
 
+          def shell(cmd):
+              try:
+                  return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60).stdout.strip()
+              except Exception as failure:
+                  return f"<{failure}>"
+
+          total = {'tests': 0, 'failures': 0, 'errors': 0}
           for path in sorted(glob.glob('target/surefire-reports/*.xml')):
               try:
                   root = ET.parse(path).getroot()
               except Exception:
                   continue
+              for key in total:
+                  total[key] += int(root.get(key) or 0)
               for case in root.iter('testcase'):
                   for child in case:
                       if child.tag not in ('failure', 'error'):
@@ -167,11 +185,15 @@ jobs:
                       if at:
                           emit(f"{name} | AT: {' // '.join(at)}")
                       # 根因链：Spring 的真实原因藏在 Caused by 里，只看首行无法定位
-                      caused = [b for b in body if b.startswith('Caused by')][:6]
+                      caused = [b for b in body if b.startswith('Caused by')][:10]
                       if caused:
                           emit(f"{name} | CAUSED: {' // '.join(caused)}")
                       elif body:
-                          emit(f"{name} | STACK: {' // '.join(body[:5])}")
+                          emit(f"{name} | STACK: {' // '.join(body[:12])}")
+          emit(f"SUMMARY tests={total['tests']} failures={total['failures']} errors={total['errors']}")
+          # 上下文加载失败多由容器/磁盘/连接资源耗尽引起，顺带记录运行环境
+          emit(f"ENV df: {shell('df -h / | tail -1')} | mem: {shell('free -m | head -2 | tail -1')}")
+          emit(f"ENV docker containers={shell('docker ps -a --format \"{{.ID}}\" | wc -l')} images={shell('docker images --format \"{{.ID}}\" | wc -l')}")
           PY
       - name: 上传测试报告
         if: always()

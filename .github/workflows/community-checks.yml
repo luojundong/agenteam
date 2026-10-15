@@ -41,6 +41,53 @@ jobs:
       - name: 社区后端完整测试
         working-directory: agenteam-server
         run: sh ./mvnw -B --no-transfer-progress clean test
+      # 作业日志需要管理员权限才能下载，失败原因无法从外部读取；
+      # 这里把失败用例与根因链以 ::error 形式写成注解（注解可公开读取），便于定位。
+      - name: 输出失败测试清单（供注解定位）
+        if: failure()
+        working-directory: agenteam-server
+        run: |
+          python3 - <<'PY'
+          import glob, re, subprocess, xml.etree.ElementTree as ET
+
+          def emit(text):
+              text = re.sub(r"\s+", " ", text or "").strip()
+              print(f"::error::{text[:1400]}")
+
+          def shell(cmd):
+              try:
+                  return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60).stdout.strip()
+              except Exception as failure:
+                  return f"<{failure}>"
+
+          total = {'tests': 0, 'failures': 0, 'errors': 0}
+          for path in sorted(glob.glob('target/surefire-reports/*.xml')):
+              try:
+                  root = ET.parse(path).getroot()
+              except Exception:
+                  continue
+              for key in total:
+                  total[key] += int(root.get(key) or 0)
+              for case in root.iter('testcase'):
+                  for child in case:
+                      if child.tag not in ('failure', 'error'):
+                          continue
+                      name = f"{case.get('classname')}#{case.get('name')}"
+                      msg = (child.get('message') or '').strip().splitlines()
+                      emit(f"{name} | {msg[0] if msg else child.tag}")
+                      body = [b.strip() for b in (child.text or '').strip().splitlines() if b.strip()]
+                      at = [b for b in body if '(' in b and '.java:' in b][:3]
+                      if at:
+                          emit(f"{name} | AT: {' // '.join(at)}")
+                      caused = [b for b in body if b.startswith('Caused by')][:10]
+                      if caused:
+                          emit(f"{name} | CAUSED: {' // '.join(caused)}")
+                      elif body:
+                          emit(f"{name} | STACK: {' // '.join(body[:12])}")
+          emit(f"SUMMARY tests={total['tests']} failures={total['failures']} errors={total['errors']}")
+          emit(f"ENV df: {shell('df -h / | tail -1')} | mem: {shell('free -m | head -2 | tail -1')}")
+          emit(f"ENV docker containers={shell('docker ps -a --format \"{{.ID}}\" | wc -l')}")
+          PY
       - name: 保留后端测试报告
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
