@@ -70,7 +70,7 @@
 
 | # | 事项 | 阻塞/依赖 | 建议责任方 |
 | --- | --- | --- | --- |
-| 1 | **推送远端并开 PR** → 触发 CI 跑 `AuditEventApiTest` 与全量测试 | 本机无 git remote；已本地提交并打 `v0.2.0` 里程碑 tag，待提供 remote URL 后 `git push --tags` + 开 PR | 用户/运维 |
+| 1 | ~~推送远端并开 PR~~ **已完成**：remote `https://github.com/luojundong/agenteam` 已添加；本地分支由 `master` 改名为 `main`（对齐 CI 监听分支），已 `git push -u origin main --tags`；`main`(b2464fd) 与 `v0.2.0` tag 均已上远端。push 到 `main` 会触发 `ci.yml` 与 `community-checks.yml`（含 `AuditEventApiTest` 等需 Docker 的集成测试，CI 环境可用 Docker）。**无需单独开 PR 即可跑 CI**（仓库为全新仓库，main 即默认分支）。 | — | 已完成 |
 | 2 | ~~失败路径全面铺开~~ **已完成**：15 个高危写操作已接入 `record(...,false)`（见 §2 #3）；新增 `TagDeletionAuditTest` 锁定行为 | — | 后端 |
 | 3 | **PM 待决项**：Q1 部署规模 / Q2 JDK 基线 / Q3 多租户 / Q4 模型厂商 / Q5 合规审计 / Q6 编排定位 / Q7 版本节奏 | 产品 + 技术负责人 | 团队 |
 | 4 | **phase 2-4 路线图**：合规安全期（凭据/出网复核、第三方许可复核、生产强校验清单化）、架构演进期（多租户/水平扩展/编排增强/模型生态）、体验国际化期（英文补全/多语种/移动无障碍） | 本轮已完成 phase 1 + phase 2 审计与发布扫描；其余按路线图分期 | 团队 |
@@ -82,5 +82,6 @@
 
 - 基线提交 `1398946`（master）：含 WS1-4、配置修复、git 引导（2602 文件）。
 - 增量提交 `3200903`：审计失败路径（公告）+ 发布流水线扫描 + 本说明。
-- 增量提交（本轮）：审计失败路径铺开至 15 个高危写操作 + `TagDeletionAuditTest` 单元测试 + 本说明同步更新。
-- 本地里程碑 tag：`v0.2.0`（无远端，未推送）。
+- 增量提交 `b2464fd`（收尾）：修复 `scripts/start-local.ps1` PowerShell 保留变量 `$args` 命名冲突（后台进程无参启动）。
+- 本地里程碑 tag：`v0.2.0`，**已推送至远端**。
+- 远端：`https://github.com/luojundong/agenteam`，分支 `main`（由 `master` 改名对齐 CI），`origin/main` = `b2464fd`。
