@@ -100,6 +100,39 @@ jobs:
       - name: 构建对象存储测试服务镜像
         working-directory: .
         run: docker build --tag agenteam/test-minio:2025-09-07-07c3a429 agenteam-server/src/test/resources/containers/minio
+      # —— 临时诊断步骤（定位后移除）——
+      # 后端全量测试需 60+ 分钟，为快速拿到 AuditEventApiTest 的上下文加载根因，
+      # 先单独跑这一个用例并把结果写成注解；continue-on-error 保证不影响门禁结论。
+      - name: 诊断：单独运行 AuditEventApiTest
+        continue-on-error: true
+        run: ./mvnw -B test -Dtest=AuditEventApiTest -DfailIfNoTests=false
+      - name: 诊断：输出 AuditEventApiTest 失败根因
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, re, xml.etree.ElementTree as ET
+
+          def emit(text):
+              text = re.sub(r"\s+", " ", text or "").strip()
+              print(f"::error::DIAG {text[:900]}")
+
+          for path in sorted(glob.glob('target/surefire-reports/*AuditEventApiTest*.xml')):
+              root = ET.parse(path).getroot()
+              for case in root.iter('testcase'):
+                  for child in case:
+                      if child.tag not in ('failure', 'error'):
+                          continue
+                      body = [b.strip() for b in (child.text or '').strip().splitlines() if b.strip()]
+                      emit(f"{case.get('classname')} | {(child.get('message') or '')[:300]}")
+                      caused = [b for b in body if b.startswith('Caused by')][:8]
+                      if caused:
+                          for c in caused:
+                              emit(f"CAUSED: {c}")
+                      at = [b for b in body if '.java:' in b][:5]
+                      if at:
+                          emit(f"AT: {' // '.join(at)}")
+          PY
+      # —— 临时诊断步骤结束 ——
       - name: 后端编译与测试
         run: ./mvnw -B test
       # 作业日志需要管理员权限才能下载，失败原因无法从外部读取；
@@ -128,10 +161,17 @@ jobs:
                       msg = (child.get('message') or '').strip().splitlines()
                       head = msg[0] if msg else child.tag
                       emit(f"{name} | {head}")
-                      # 追加堆栈前几行，定位断言所在行与真实原因
-                      body = (child.text or '').strip().splitlines()
-                      if body:
-                          emit(f"{name} | STACK: {' // '.join(b.strip() for b in body[:8])}")
+                      body = [b.strip() for b in (child.text or '').strip().splitlines() if b.strip()]
+                      # 断言/报错所在行
+                      at = [b for b in body if '(' in b and '.java:' in b][:3]
+                      if at:
+                          emit(f"{name} | AT: {' // '.join(at)}")
+                      # 根因链：Spring 的真实原因藏在 Caused by 里，只看首行无法定位
+                      caused = [b for b in body if b.startswith('Caused by')][:6]
+                      if caused:
+                          emit(f"{name} | CAUSED: {' // '.join(caused)}")
+                      elif body:
+                          emit(f"{name} | STACK: {' // '.join(body[:5])}")
           PY
       - name: 上传测试报告
         if: always()

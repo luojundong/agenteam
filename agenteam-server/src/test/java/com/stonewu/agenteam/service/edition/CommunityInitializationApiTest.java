@@ -152,7 +152,10 @@ class CommunityInitializationApiTest {
             .andExpect(status().isOk()).andReturn()).findValuesAsText("code");
         assertThat(available).contains("integration.view", "integration.manage", "integration.test", "usage.view",
             "resource.grants.manage", "enterprise.roles.view");
-        assertThat(available).doesNotContain("audit.view", "audit.export", "usage.manage", "enterprise.roles.manage");
+        // audit.view 自 v0.2.0 起进入内置企业管理员模板（新企业开通即授予），
+        // 因此它属于"可授予"目录；只有导出等尚未开放的权限仍不应出现。
+        assertThat(available).contains("audit.view");
+        assertThat(available).doesNotContain("audit.export", "usage.manage", "enterprise.roles.manage");
         http.postJson("/api/v1/enterprises/" + enterprise + "/roles", session, Map.of("name", "不应创建的角色",
                 "code", "blocked-role", "description", "", "dataScope", "enterprise", "permissions", List.of("workspace.view")))
             .andExpect(status().isMethodNotAllowed());
