@@ -134,12 +134,19 @@ jobs:
           format: "sarif"
           output: "trivy.sarif"
           ignore-unfixed: true
+          exit-code: "0"
           # 跳过前端依赖树与构建产物，避免噪声淹没信号。
           # Trivy 期望逗号分隔路径，写成多行块会被当成单个含换行的路径而失效。
           skip-dirs: "agenteam-web/node_modules,**/target,.git"
+          # 与下方 OWASP 步骤一致：先以非阻塞方式暴露可见性。Trivy 新版本(v0.70+)
+          # 对 skip-dirs 与退出码行为有变化，扫描自身异常不应阻断流水线；待按实际
+          # 扫描结果调好阈值与跳过规则后，再转为阻塞门禁。
+          continue-on-error: true
 
       - name: 上传 Trivy 结果到代码扫描
         if: always()
+        # 上游扫描未产出文件时不应让作业失败（文件缺失已由扫描步骤本身暴露）。
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: "trivy.sarif"
