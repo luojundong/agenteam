@@ -91,10 +91,14 @@ jobs:
           java-version: 21
           cache: maven
       # 沙盒与对象存储测试依赖本地镜像，缺少时沙盒相关用例会返回 503
-      # "沙盒暂时无法无法使用"（与 community-checks.yml 保持一致）。
+      # "沙盒暂时无法使用"（与 community-checks.yml 保持一致）。
+      # 注意：本作业 defaults 的 working-directory 是 agenteam-server，
+      # 这两个路径相对仓库根目录，必须显式回到根目录，否则 docker build 会立刻失败。
       - name: 构建共有办公沙箱镜像
+        working-directory: .
         run: docker build --tag agenteam/sandbox-office:local deploy/sandbox
       - name: 构建对象存储测试服务镜像
+        working-directory: .
         run: docker build --tag agenteam/test-minio:2025-09-07-07c3a429 agenteam-server/src/test/resources/containers/minio
       - name: 后端编译与测试
         run: ./mvnw -B test
