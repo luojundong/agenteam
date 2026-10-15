@@ -22,8 +22,10 @@ jobs:
   backend:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
-    env:
-      MAVEN_OPTS: -Xmx768m
+    # 此前这里限制 MAVEN_OPTS: -Xmx768m，而 ci.yml 的同名作业不限制堆大小。
+    # 出现过同一 commit 在 ci.yml 全绿、在本作业 clean test 阶段即失败（tests=0、
+    # 一个容器都没起），属于构建期而非测试期的失败。两者不必要的差异本身即是脆弱来源，
+    # 因此对齐 ci.yml：不再人为压低 Maven 堆。
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -40,9 +42,32 @@ jobs:
         run: docker build --tag agenteam/test-minio:2025-09-07-07c3a429 agenteam-server/src/test/resources/containers/minio
       - name: 社区后端完整测试
         working-directory: agenteam-server
-        run: sh ./mvnw -B --no-transfer-progress clean test
+        # pipefail 保证 Maven 的失败不会因为管道被吞掉；日志留存供下一步定位编译期失败。
+        run: |
+          set -o pipefail
+          sh ./mvnw -B --no-transfer-progress clean test 2>&1 | tee maven-build.log
       # 作业日志需要管理员权限才能下载，失败原因无法从外部读取；
       # 这里把失败用例与根因链以 ::error 形式写成注解（注解可公开读取），便于定位。
+      - name: 输出构建失败原因（供注解定位）
+        # 下面的"输出失败测试清单"步骤只在测试跑起来后有内容。编译期或依赖解析期失败时
+        # 它给出 tests=0/0 容器，完全看不出原因——真正的线索在 Maven 自己的 [ERROR] 行里。
+        if: failure()
+        working-directory: agenteam-server
+        run: |
+          python3 - <<'PY'
+          import os, re
+          if not os.path.exists('maven-build.log'):
+              print('::error::BUILD_LOG MISSING：Maven 输出未留存，无法判定失败位置。')
+              raise SystemExit
+          lines = open('maven-build.log', encoding='utf-8', errors='replace').read().splitlines()
+          errors = [re.sub(r'\s+', ' ', l).strip() for l in lines if l.startswith('[ERROR]')]
+          print(f'::error::BUILD_LOG lines={len(lines)} errorLines={len(errors)}')
+          for line in errors[:14]:
+              print(f'::error::BUILD {line[:900]}')
+          if not errors:
+              tail = [re.sub(r'\s+', ' ', l).strip() for l in lines[-12:] if l.strip()]
+              print('::error::BUILD TAIL ' + ' // '.join(tail)[:1400])
+          PY
       - name: 输出失败测试清单（供注解定位）
         if: failure()
         working-directory: agenteam-server
