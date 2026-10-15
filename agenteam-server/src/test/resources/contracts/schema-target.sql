@@ -805,7 +805,6 @@ CREATE TABLE `agent_conversation`
   `approval_policy`     VARCHAR(20)  NOT NULL DEFAULT 'default' COMMENT '工具审批策略：默认、自动批准、完全访问',
   `model_profile_id`    VARCHAR(100) NULL COMMENT '当前对话选择的模型；旧会话为空时使用固定员工版本的默认模型',
   `reasoning_effort`    VARCHAR(20) NULL COMMENT '当前对话的思考等级；为空时采用模型默认行为',
-  `project_id`          VARCHAR(100) NULL COMMENT '所属工作台项目；历史会话为空',
   `status`              VARCHAR(20)  NOT NULL DEFAULT 'active' COMMENT '会话可用状态',
   `favorite`            BOOLEAN      NOT NULL DEFAULT FALSE COMMENT '本人收藏',
   `active_run_id`       VARCHAR(100) NULL COMMENT '唯一未结束执行；修改前必须锁会话行',

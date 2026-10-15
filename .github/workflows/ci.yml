@@ -90,15 +90,27 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: maven
+      # 沙盒与对象存储测试依赖本地镜像，缺少时沙盒相关用例会返回 503
+      # "沙盒暂时无法无法使用"（与 community-checks.yml 保持一致）。
+      - name: 构建共有办公沙箱镜像
+        run: docker build --tag agenteam/sandbox-office:local deploy/sandbox
+      - name: 构建对象存储测试服务镜像
+        run: docker build --tag agenteam/test-minio:2025-09-07-07c3a429 agenteam-server/src/test/resources/containers/minio
       - name: 后端编译与测试
         run: ./mvnw -B test
       # 作业日志需要管理员权限才能下载，失败原因无法从外部读取；
-      # 这里把失败用例以 ::error 形式写成注解（注解可公开读取），便于定位。
+      # 这里把失败用例与堆栈片段以 ::error 形式写成注解（注解可公开读取），便于定位。
       - name: 输出失败测试清单（供注解定位）
         if: failure()
         run: |
           python3 - <<'PY'
-          import glob, xml.etree.ElementTree as ET
+          import glob, re, xml.etree.ElementTree as ET
+
+          def emit(text):
+              # 注解里换行会截断输出，统一压成单行
+              text = re.sub(r"\s+", " ", text or "").strip()
+              print(f"::error::{text[:900]}")
+
           for path in sorted(glob.glob('target/surefire-reports/*.xml')):
               try:
                   root = ET.parse(path).getroot()
@@ -106,10 +118,16 @@ jobs:
                   continue
               for case in root.iter('testcase'):
                   for child in case:
-                      if child.tag in ('failure', 'error'):
-                          lines = (child.get('message') or '').strip().splitlines()
-                          head = lines[0] if lines else child.tag
-                          print(f"::error::{case.get('classname')}#{case.get('name')}: {head[:300]}")
+                      if child.tag not in ('failure', 'error'):
+                          continue
+                      name = f"{case.get('classname')}#{case.get('name')}"
+                      msg = (child.get('message') or '').strip().splitlines()
+                      head = msg[0] if msg else child.tag
+                      emit(f"{name} | {head}")
+                      # 追加堆栈前几行，定位断言所在行与真实原因
+                      body = (child.text or '').strip().splitlines()
+                      if body:
+                          emit(f"{name} | STACK: {' // '.join(b.strip() for b in body[:8])}")
           PY
       - name: 上传测试报告
         if: always()
