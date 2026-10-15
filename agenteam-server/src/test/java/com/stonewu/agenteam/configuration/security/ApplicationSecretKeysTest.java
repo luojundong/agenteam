@@ -29,6 +29,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executors;
@@ -137,8 +138,79 @@ class ApplicationSecretKeysTest {
         assertTrue(failure.getMessage().contains("应用密钥文件无法读取或创建"));
     }
 
-    private AnnotationConfigApplicationContext context(Path file, Map<String, Object> environment) throws Exception {
+    @Test
+    void productionRefusesToGenerateKeysInsteadOfWritingThemToDisk() throws Exception {
+        Path file = directory.resolve("security/keys.properties");
+        // 单例在 refresh 阶段就创建，因此失败发生在这里，而不是首次取用时。
+        var failure = assertThrows(RuntimeException.class, () -> context(file, Map.of(), "production"));
+        String message = rootCauseMessage(failure);
+        assertTrue(message.contains("生产环境不允许自动生成部署密钥"), "实际异常：" + message);
+        // 两个环境变量都应指名到位，否则运维只能挨个试。
+        assertTrue(message.contains("AGENTEAM_REQUEST_SIGNING_KEY"), message);
+        assertTrue(message.contains("AGENTEAM_ENCRYPTION_KEYS"), message);
+        // 关键：拒绝发生在落盘之前，否则生产目录里会留下一个来历不明的新密钥。
+        assertFalse(Files.exists(file));
+    }
+
+    private static String rootCauseMessage(Throwable failure) {
+        Throwable current = failure;
+        while (current.getCause() != null) {
+            current = current.getCause();
+        }
+        return String.valueOf(current.getMessage());
+    }
+
+    @Test
+    void productionAcceptsInjectedKeys() throws Exception {
+        Path file = directory.resolve("unused/keys.properties");
+        try (var context = context(file, Map.of("AGENTEAM_REQUEST_SIGNING_KEY", encoded(1),
+            "AGENTEAM_ENCRYPTION_KEYS", versions(Map.of("v1", encoded(2))),
+            "AGENTEAM_ACTIVE_ENCRYPTION_KEY", "v1"), "production")) {
+            var keys = context.getBean(ApplicationSecretKeys.class);
+            assertFalse(keys.generatedLocally());
+            assertArrayEquals(Base64.getDecoder().decode(encoded(1)), keys.requestKey().getEncoded());
+        }
+        assertFalse(Files.exists(file.getParent()));
+    }
+
+    /**
+     * 轮换的前提：密文携带自己的密钥版本号，因此旧版本密钥必须继续留在配置里，
+     * 一旦摘掉，历史内容当场变成读不出来的废数据。
+     *
+     * <p>这条用例是轮换文档的验收依据——流程写进文档之前先确认它真的走得通。
+     */
+    @Test
+    void rotatedActiveVersionKeepsPreviouslyEncryptedContentReadable() {
+        var before = new ApplicationSecretKeys(encoded(1), versions(Map.of("v1", encoded(9))), "v1",
+            directory.resolve("a.properties").toString());
+        var archived = new PayloadEncryption(before, json).encrypt("轮换之前保存的内容", "run");
+        assertEquals("v1", archived.keyVersion());
+
+        // 轮换后：新版本用于写入，旧版本保留用于解密存量。
+        var both = new LinkedHashMap<String, String>();
+        both.put("v1", encoded(9));
+        both.put("v2", encoded(8));
+        var rotated = new ApplicationSecretKeys(encoded(1), versions(both), "v2",
+            directory.resolve("b.properties").toString());
+        assertEquals("v2", rotated.activeVersion());
+        assertEquals("轮换之前保存的内容", new PayloadEncryption(rotated, json).decrypt(archived, "run", String.class));
+        assertEquals("v2", new PayloadEncryption(rotated, json).encrypt("新增内容", "run").keyVersion());
+
+        // 反例：摘掉旧版本，存量立刻读不出来。这正是轮换必须保留旧密钥的原因。
+        var dropped = new ApplicationSecretKeys(encoded(1), versions(Map.of("v2", encoded(8))), "v2",
+            directory.resolve("c.properties").toString());
+        assertThrows(IllegalStateException.class,
+            () -> new PayloadEncryption(dropped, json).decrypt(archived, "run", String.class));
+    }
+
+    private String versions(Map<String, String> versions) {
+        return assertDoesNotThrow(() -> json.writeValueAsString(versions));
+    }
+
+    private AnnotationConfigApplicationContext context(Path file, Map<String, Object> environment,
+                                                      String... activeProfiles) throws Exception {
         var context = new AnnotationConfigApplicationContext();
+        context.getEnvironment().setActiveProfiles(activeProfiles);
         var sources = context.getEnvironment().getPropertySources();
         sources.replace(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
             new MapPropertySource(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME, environment));
