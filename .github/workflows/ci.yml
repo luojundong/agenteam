@@ -77,6 +77,9 @@ jobs:
   backend:
     name: 后端构建与测试 (Maven)
     runs-on: ubuntu-latest
+    # 189 个测试类、每个数据库测试都会新建库并跑一遍全量 Flyway 迁移，实测 60~90 分钟；
+    # 上限设为 150 分钟，避免异常挂起时长期占用 runner。
+    timeout-minutes: 150
     defaults:
       run:
         working-directory: agenteam-server
@@ -89,6 +92,32 @@ jobs:
           cache: maven
       - name: 后端编译与测试
         run: ./mvnw -B test
+      # 作业日志需要管理员权限才能下载，失败原因无法从外部读取；
+      # 这里把失败用例以 ::error 形式写成注解（注解可公开读取），便于定位。
+      - name: 输出失败测试清单（供注解定位）
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          for path in sorted(glob.glob('target/surefire-reports/*.xml')):
+              try:
+                  root = ET.parse(path).getroot()
+              except Exception:
+                  continue
+              for case in root.iter('testcase'):
+                  for child in case:
+                      if child.tag in ('failure', 'error'):
+                          lines = (child.get('message') or '').strip().splitlines()
+                          head = lines[0] if lines else child.tag
+                          print(f"::error::{case.get('classname')}#{case.get('name')}: {head[:300]}")
+          PY
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: agenteam-server/target/surefire-reports
+          if-no-files-found: ignore
 
   security:
     name: 安全门禁 (P0)
