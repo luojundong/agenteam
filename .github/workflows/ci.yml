@@ -125,7 +125,7 @@ jobs:
           pnpm audit --audit-level=high
 
       - name: Trivy 文件系统扫描（依赖 CVE + 密钥 + 配置误用）
-        uses: aquasecurity/trivy-action@0.30.0
+        uses: aquasecurity/trivy-action@6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5 # v0.30.0
         with:
           scan-type: "fs"
           scan-ref: "."
