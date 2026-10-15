@@ -8131,6 +8131,18 @@
           "type": "DATETIME(3)",
           "nullable": false,
           "description": "动作时间"
+        },
+        {
+          "name": "prev_hash",
+          "type": "CHAR(64)",
+          "nullable": true,
+          "description": "同作用域上一条记录的哈希，链首为空"
+        },
+        {
+          "name": "hash",
+          "type": "CHAR(64)",
+          "nullable": true,
+          "description": "本记录防篡改哈希，尚未封印的历史记录为空"
         }
       ],
       "primaryKey": [
@@ -8155,6 +8167,45 @@
           "id"
         ]
       ],
+      "foreignKeys": [],
+      "checks": [],
+      "fulltext": []
+    },
+    {
+      "name": "audit_event_chain",
+      "description": "审计哈希链链头，写入时按作用域行锁串行化",
+      "migration": "新增表",
+      "columns": [
+        {
+          "name": "scope_key",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "description": "哈希链作用域：等于 enterprise_id，全局身份动作为 -"
+        },
+        {
+          "name": "last_event_id",
+          "type": "VARCHAR(100)",
+          "nullable": false,
+          "description": "链尾事件编号"
+        },
+        {
+          "name": "last_hash",
+          "type": "CHAR(64)",
+          "nullable": false,
+          "description": "链尾哈希"
+        },
+        {
+          "name": "updated_at",
+          "type": "DATETIME(3)",
+          "nullable": false,
+          "description": "链尾更新时间"
+        }
+      ],
+      "primaryKey": [
+        "scope_key"
+      ],
+      "uniqueKeys": [],
+      "indexes": [],
       "foreignKeys": [],
       "checks": [],
       "fulltext": []

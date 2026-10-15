@@ -51,4 +51,10 @@ public class AuditEventRow {
 
     @TableField(value = "created_at")
     private Instant createdAt;
+
+    @TableField(value = "prev_hash")
+    private String prevHash;
+
+    @TableField(value = "hash")
+    private String hash;
 }

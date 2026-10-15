@@ -1376,12 +1376,24 @@ CREATE TABLE `audit_event`
   `detail_redacted_json` JSON         NOT NULL COMMENT '仅包含必要脱敏差异',
   `request_id`           VARCHAR(100) NOT NULL COMMENT '服务端请求编号',
   `created_at`           DATETIME(3) NOT NULL COMMENT '动作时间',
+  `prev_hash`            CHAR(64) NULL COMMENT '同作用域上一条记录的哈希，链首为空',
+  `hash`                 CHAR(64) NULL COMMENT '本记录防篡改哈希，尚未封印的历史记录为空',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_audit_event_1` (`enterprise_id`, `id`),
   KEY                    `idx_audit_event_1` (`enterprise_id`, `created_at`, `id`),
   KEY                    `idx_audit_event_2` (`enterprise_id`, `actor_user_id`, `created_at`, `id`),
   CONSTRAINT `ck_audit_event_1` CHECK (`result` IN ('success', 'failure'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='只追加的管理与重要操作记录，清理业务对象不删除记录';
+
+-- 审计哈希链链头，写入时按作用域行锁串行化
+CREATE TABLE `audit_event_chain`
+(
+  `scope_key`     VARCHAR(100) NOT NULL COMMENT '哈希链作用域：等于 enterprise_id，全局身份动作为 -',
+  `last_event_id` VARCHAR(100) NOT NULL COMMENT '链尾事件编号',
+  `last_hash`     CHAR(64)     NOT NULL COMMENT '链尾哈希',
+  `updated_at`    DATETIME(3)  NOT NULL COMMENT '链尾更新时间',
+  PRIMARY KEY (`scope_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='审计哈希链链头，写入时按作用域行锁串行化';
 
 -- 修改请求去重记录，事务结果可重复读取
 CREATE TABLE `api_request`
