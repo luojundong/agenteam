@@ -84,3 +84,41 @@ Java 侧 32 个方法同理，绝大多数是按用户主键（`updateProfile`�
   经由 `OperationalMetrics` 供运维指标使用，不含租户数据。
 - **邀请 token 全局查询**：见 P2-B 结论，接受邀请者本就在企业外，无上下文可比对；
   `token_hash` 有唯一键，后续 `matchEmail` 强制邮箱一致。已书面豁免。
+
+## 6. P2-F 落地：豁免登记表 + 机器校验（已实施）
+
+决策见对话记录：用户拍板采用"豁免登记表 + 断言测试"方案，**不引入 `TenantLineInnerInterceptor`**。
+依据如下两部分代码落地：
+
+- 登记表：`agenteam-server/src/main/java/com/stonewu/agenteam/configuration/multitenancy/TenantScopeExemptions.java`
+  （枚举 `TenantScopeExemption` 给出 7 类豁免理由：`PRIMARY_KEY_OR_UNIQUE` / `ID_LIST_FROM_SCOPED_INPUT` /
+  `GLOBAL_TABLE_NO_TENANT_COLUMN` / `GLOBAL_MAINTENANCE_SWEEP` / `BACKGROUND_JOB_NO_TENANT_CONTEXT` /
+  `INSERT_NEW_ROW` / `PLATFORM_SCOPED_TABLE`）。
+- 校验测试：`agenteam-server/src/test/java/com/stonewu/agenteam/multitenancy/TenantScopeExemptionTest.java`
+  每次构建动态扫描全部 mapper XML（内联 `<include>` 片段）与 Java Wrapper 方法，算出"无租户条件集合"，
+  并断言其**精确等于**登记表。新增/删除任一条无租户条件查询都会让测试失败。
+
+### 6.1 实测规模（commit 落地时）
+
+- XML 映射语句：169 条中 **28 条**无 `enterprise_id` / `scope` 条件，全部登记。
+- Java Wrapper 方法：**45 条**无租户字段，全部登记。
+- 两者合计 73 项豁免，逐条归入上述 7 类理由，无任何跨租户泄露。
+
+### 6.2 豁免分类要点
+
+- **主键/唯一键（13+ 项）**：按 `id` / `token_hash` / `public_login_key` / `storage_key` / `state_hash` /
+  `user_id`（用户偏好主键）过滤，记录全局唯一，无法命中他租户。
+- **全局表（14+ 项）**：身份账户、令牌、RBAC 权限、企业根、用户偏好、运营态、安装引导——数据模型本身无
+  `enterprise_id` 维度。
+- **后台作业（11+ 项）**：调度线程执行，无 HTTP 租户 `ThreadLocal` 上下文，按 `id`/状态加锁后逐条处理各自记录。
+- **全局维护清理（3 项）**：按状态/时间批量处理内部数据（OAuth 会话过期、通知投递清理、集成保留），
+  结果不向终端用户返回跨租户内容。
+- **平台作用域（6 项）**：公告的 `scope` 列在 service 层统一处理（P2-B 已硬化）。
+- **id 列表（1 项）**：`AnnouncementViewMapper.views` 按上游已带作用域的发布序号列表过滤。
+
+### 6.3 维护约定
+
+新增任何"无租户条件"的数据访问时，**必须**在 `TenantScopeExemptions` 同步登记并写明理由；
+否则 `TenantScopeExemptionTest` 会失败并提示差异。若确属租户表却漏了条件，那是一条**真实越权缺陷**，
+应先修复（参考 P2-B），而非登记豁免。
+
