@@ -1,0 +1,136 @@
+# 后端构建与测试（单一事实源）
+#
+# 这是「同一套后端测试」的唯一权威定义。ci.yml 与 community-checks.yml 都通过
+# `uses: ./.github/workflows/backend-test.yml` 引用本文件，禁止在调用方重复定义
+# 后端测试步骤——任何环境/命令/诊断的变更只改这里，从结构上消除两份定义漂移。
+#
+# 设计约束（漂移根因的对症下药）：
+#   - runner 钉死 ubuntu-24.04（不随 ubuntu-latest 静默升级而分叉）
+#   - action 钉 SHA（供应链安全 + 不随时间解析到不同实现）
+#   - 统一 clean test（避免增量编译缓存导致「看似随机」的偶发失败）
+#   - 统一 pipefail + tee 留存日志，把编译/依赖解析期失败也暴露成注解
+
+name: 后端构建与测试
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        description: 上传的测试报告产物名
+        required: false
+        type: string
+        default: surefire-reports
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: 后端构建与测试 (Maven)
+    runs-on: ubuntu-24.04
+    # 189 个测试类、每个数据库测试都会新建库并跑一遍全量 Flyway 迁移，实测 60~150 分钟；
+    # 上限设为 240 分钟，避免异常挂起时长期占用 runner，也避免正常慢跑被误杀。
+    timeout-minutes: 240
+    defaults:
+      run:
+        working-directory: agenteam-server
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: agenteam-server/pom.xml
+      # 沙盒与对象存储测试依赖本地镜像，缺少时沙盒相关用例会返回 503「沙盒暂时无法使用」。
+      # 这两个路径相对仓库根目录，必须显式回到根目录，否则 docker build 会立刻失败。
+      - name: 构建共有办公沙箱镜像
+        working-directory: .
+        run: docker build --tag agenteam/sandbox-office:local deploy/sandbox
+      - name: 构建对象存储测试服务镜像
+        working-directory: .
+        run: docker build --tag agenteam/test-minio:2025-09-07-07c3a429 agenteam-server/src/test/resources/containers/minio
+      - name: 后端编译与测试
+        # pipefail 保证 Maven 的失败不会因为管道被吞掉；tee 留存日志供下一步定位
+        # 编译期 / 依赖解析期失败（此时还没有 surefire 报告，旧诊断只会给 tests=0）。
+        # 统一 clean test：避免增量编译缓存污染导致的偶发「看似随机」失败。
+        run: |
+          set -o pipefail
+          sh ./mvnw -B --no-transfer-progress clean test 2>&1 | tee maven-build.log
+      # 作业日志需要管理员权限才能下载，失败原因无法从外部读取；这里把根因以 ::error
+      # 形式写成注解（注解可公开读取），便于定位。
+      - name: 输出构建失败原因（供注解定位）
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import os, re
+          if not os.path.exists('maven-build.log'):
+              print('::error::BUILD_LOG MISSING：Maven 输出未留存，无法判定失败位置。')
+              raise SystemExit
+          lines = open('maven-build.log', encoding='utf-8', errors='replace').read().splitlines()
+          errors = [re.sub(r'\s+', ' ', l).strip() for l in lines if l.startswith('[ERROR]')]
+          print(f'::error::BUILD_LOG lines={len(lines)} errorLines={len(errors)}')
+          for line in errors[:14]:
+              print(f'::error::BUILD {line[:900]}')
+          if not errors:
+              tail = [re.sub(r'\s+', ' ', l).strip() for l in lines[-12:] if l.strip()]
+              print('::error::BUILD TAIL ' + ' // '.join(tail)[:1400])
+          PY
+      - name: 输出失败测试清单（供注解定位）
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import glob, re, subprocess, xml.etree.ElementTree as ET
+
+          def emit(text):
+              # 注解里换行会截断输出，统一压成单行
+              text = re.sub(r"\s+", " ", text or "").strip()
+              print(f"::error::{text[:1400]}")
+
+          def shell(cmd):
+              try:
+                  return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60).stdout.strip()
+              except Exception as failure:
+                  return f"<{failure}>"
+
+          total = {'tests': 0, 'failures': 0, 'errors': 0}
+          for path in sorted(glob.glob('target/surefire-reports/*.xml')):
+              try:
+                  root = ET.parse(path).getroot()
+              except Exception:
+                  continue
+              for key in total:
+                  total[key] += int(root.get(key) or 0)
+              for case in root.iter('testcase'):
+                  for child in case:
+                      if child.tag not in ('failure', 'error'):
+                          continue
+                      name = f"{case.get('classname')}#{case.get('name')}"
+                      msg = (child.get('message') or '').strip().splitlines()
+                      head = msg[0] if msg else child.tag
+                      emit(f"{name} | {head}")
+                      body = [b.strip() for b in (child.text or '').strip().splitlines() if b.strip()]
+                      # 断言/报错所在行
+                      at = [b for b in body if '(' in b and '.java:' in b][:3]
+                      if at:
+                          emit(f"{name} | AT: {' // '.join(at)}")
+                      # 根因链：Spring 的真实原因藏在 Caused by 里，只看首行无法定位
+                      caused = [b for b in body if b.startswith('Caused by')][:10]
+                      if caused:
+                          emit(f"{name} | CAUSED: {' // '.join(caused)}")
+                      elif body:
+                          emit(f"{name} | STACK: {' // '.join(body[:12])}")
+          emit(f"SUMMARY tests={total['tests']} failures={total['failures']} errors={total['errors']}")
+          # 上下文加载失败多由容器/磁盘/连接资源耗尽引起，顺带记录运行环境
+          emit(f"ENV df: {shell('df -h / | tail -1')} | mem: {shell('free -m | head -2 | tail -1')}")
+          emit(f"ENV docker containers={shell('docker ps -a --format \"{{.ID}}\" | wc -l')} images={shell('docker images --format \"{{.ID}}\" | wc -l')}")
+          PY
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: agenteam-server/target/surefire-reports
+          if-no-files-found: ignore

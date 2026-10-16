@@ -1,9 +1,11 @@
 name: Community checks
 
+# 社区检查只覆盖「ci.yml 不跑」的场景：来自 fork 的外部贡献 PR、以及手动 dispatch。
+# 不再监听 push: branches:[main]——主线后端/前端测试已由 ci.yml 单一触发，
+# 否则同一 push 会同时跑两份各 50~180 分钟的后端测试（双跑 + 调度割裂 = 伪随机失败）。
+# 主线安全扫描（Trivy + OWASP）由 ci.yml 的 security 作业覆盖，本文件无需重复。
 on:
   pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 # 公共贡献只使用本仓库的读取权限，不引用商业仓库、私有发布凭据或签发密钥。
@@ -19,142 +21,27 @@ env:
   NEXT_TELEMETRY_DISABLED: "1"
 
 jobs:
+  # 后端构建与测试统一引用 reusable workflow，定义见 backend-test.yml（单一事实源）。
   backend:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 180
-    # 此前这里限制 MAVEN_OPTS: -Xmx768m，而 ci.yml 的同名作业不限制堆大小。
-    # 出现过同一 commit 在 ci.yml 全绿、在本作业 clean test 阶段即失败（tests=0、
-    # 一个容器都没起），属于构建期而非测试期的失败。两者不必要的差异本身即是脆弱来源，
-    # 因此对齐 ci.yml：不再人为压低 Maven 堆。
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
-        with:
-          distribution: temurin
-          java-version: "21"
-          cache: maven
-          cache-dependency-path: agenteam-server/pom.xml
-      - name: 构建共有办公沙箱
-        run: docker build --tag agenteam/sandbox-office:local deploy/sandbox
-      - name: 从固定源码构建对象存储测试服务
-        run: docker build --tag agenteam/test-minio:2025-09-07-07c3a429 agenteam-server/src/test/resources/containers/minio
-      - name: 社区后端完整测试
-        working-directory: agenteam-server
-        # pipefail 保证 Maven 的失败不会因为管道被吞掉；日志留存供下一步定位编译期失败。
-        run: |
-          set -o pipefail
-          sh ./mvnw -B --no-transfer-progress clean test 2>&1 | tee maven-build.log
-      # 作业日志需要管理员权限才能下载，失败原因无法从外部读取；
-      # 这里把失败用例与根因链以 ::error 形式写成注解（注解可公开读取），便于定位。
-      - name: 输出构建失败原因（供注解定位）
-        # 下面的"输出失败测试清单"步骤只在测试跑起来后有内容。编译期或依赖解析期失败时
-        # 它给出 tests=0/0 容器，完全看不出原因——真正的线索在 Maven 自己的 [ERROR] 行里。
-        if: failure()
-        working-directory: agenteam-server
-        run: |
-          python3 - <<'PY'
-          import os, re
-          if not os.path.exists('maven-build.log'):
-              print('::error::BUILD_LOG MISSING：Maven 输出未留存，无法判定失败位置。')
-              raise SystemExit
-          lines = open('maven-build.log', encoding='utf-8', errors='replace').read().splitlines()
-          errors = [re.sub(r'\s+', ' ', l).strip() for l in lines if l.startswith('[ERROR]')]
-          print(f'::error::BUILD_LOG lines={len(lines)} errorLines={len(errors)}')
-          for line in errors[:14]:
-              print(f'::error::BUILD {line[:900]}')
-          if not errors:
-              tail = [re.sub(r'\s+', ' ', l).strip() for l in lines[-12:] if l.strip()]
-              print('::error::BUILD TAIL ' + ' // '.join(tail)[:1400])
-          PY
-      - name: 输出失败测试清单（供注解定位）
-        if: failure()
-        working-directory: agenteam-server
-        run: |
-          python3 - <<'PY'
-          import glob, re, subprocess, xml.etree.ElementTree as ET
+    name: 后端构建与测试 (Maven)
+    uses: ./.github/workflows/backend-test.yml
+    with:
+      artifact-name: community-backend-tests
 
-          def emit(text):
-              text = re.sub(r"\s+", " ", text or "").strip()
-              print(f"::error::{text[:1400]}")
-
-          def shell(cmd):
-              try:
-                  return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60).stdout.strip()
-              except Exception as failure:
-                  return f"<{failure}>"
-
-          total = {'tests': 0, 'failures': 0, 'errors': 0}
-          for path in sorted(glob.glob('target/surefire-reports/*.xml')):
-              try:
-                  root = ET.parse(path).getroot()
-              except Exception:
-                  continue
-              for key in total:
-                  total[key] += int(root.get(key) or 0)
-              for case in root.iter('testcase'):
-                  for child in case:
-                      if child.tag not in ('failure', 'error'):
-                          continue
-                      name = f"{case.get('classname')}#{case.get('name')}"
-                      msg = (child.get('message') or '').strip().splitlines()
-                      emit(f"{name} | {msg[0] if msg else child.tag}")
-                      body = [b.strip() for b in (child.text or '').strip().splitlines() if b.strip()]
-                      at = [b for b in body if '(' in b and '.java:' in b][:3]
-                      if at:
-                          emit(f"{name} | AT: {' // '.join(at)}")
-                      caused = [b for b in body if b.startswith('Caused by')][:10]
-                      if caused:
-                          emit(f"{name} | CAUSED: {' // '.join(caused)}")
-                      elif body:
-                          emit(f"{name} | STACK: {' // '.join(body[:12])}")
-          emit(f"SUMMARY tests={total['tests']} failures={total['failures']} errors={total['errors']}")
-          emit(f"ENV df: {shell('df -h / | tail -1')} | mem: {shell('free -m | head -2 | tail -1')}")
-          emit(f"ENV docker containers={shell('docker ps -a --format \"{{.ID}}\" | wc -l')}")
-          PY
-      - name: 保留后端测试报告
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: community-backend-tests
-          path: agenteam-server/target/surefire-reports/
-          retention-days: 7
-          if-no-files-found: ignore
-
+  # 前端质量与测试统一引用 reusable workflow，定义见 frontend-check.yml（单一事实源）。
   frontend:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: "24"
-      - name: 准备固定的前端包管理器
-        run: corepack enable && corepack prepare pnpm@11.15.1 --activate
-      - name: 安装固定依赖
-        working-directory: agenteam-web
-        run: pnpm install --frozen-lockfile
-      - name: 检查、类型与生产构建
-        working-directory: agenteam-web
-        run: |
-          pnpm lint
-          pnpm exec next typegen
-          pnpm exec tsc --noEmit
-          pnpm build
-      - name: 共有入口与功能检查
-        working-directory: agenteam-web
-        run: |
-          pnpm test:i18n
-          pnpm test:navigation
-          pnpm test:channel-auth
-          pnpm test:schedule-actions
-          pnpm test:resource-deletion
-          pnpm test:conversation
-      - name: 镜像输入与文件范围检查
-        run: node --test scripts/release/community-backend.test.mjs scripts/release/image-inputs.test.mjs scripts/release/source-archive-inputs.test.mjs scripts/release/mysql-compose.test.mjs
+    name: 前端质量与测试
+    uses: ./.github/workflows/frontend-check.yml
+    with:
+      test-commands: |
+        pnpm test:i18n
+        pnpm test:navigation
+        pnpm test:channel-auth
+        pnpm test:schedule-actions
+        pnpm test:resource-deletion
+        pnpm test:conversation
+      # 社区开源发布包合规检查（镜像输入 / 文件范围 / 源码归档 / mysql compose）
+      run-release-checks: true
 
   release-security:
     runs-on: ubuntu-24.04

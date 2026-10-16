@@ -1,0 +1,61 @@
+# 前端质量与测试（单一事实源）
+#
+# 这是「同一套前端检查」的唯一权威定义。ci.yml 与 community-checks.yml 都通过
+# `uses: ./.github/workflows/frontend-check.yml` 引用本文件。各调用方通过
+# inputs 选择要运行的测试子集与是否运行发布包文件范围检查，步骤本身不重复定义。
+#
+# 设计约束（与后端一致）：
+#   - runner 钉死 ubuntu-24.04
+#   - action 钉 SHA
+#   - node 24 + pnpm 11.15.1 钉版（与项目 PM 策略文档、README 要求一致）
+
+name: 前端质量与测试
+
+on:
+  workflow_call:
+    inputs:
+      test-commands:
+        description: 多行，要运行的 pnpm test:* 命令
+        required: true
+        type: string
+      run-release-checks:
+        description: 是否运行发布包文件范围检查（社区开源发布包合规）
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: 前端质量与测试
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: agenteam-web
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+      - name: 准备固定的前端包管理器
+        run: corepack enable && corepack prepare pnpm@11.15.1 --activate
+      - name: 安装固定依赖
+        run: pnpm install --frozen-lockfile
+      - name: 检查、类型与生产构建
+        run: |
+          pnpm lint
+          pnpm exec next typegen
+          pnpm exec tsc --noEmit
+          pnpm build
+      - name: 运行测试套件
+        run: |
+          ${{ inputs.test-commands }}
+      - name: 发布包文件范围检查
+        if: ${{ inputs.run-release-checks }}
+        working-directory: .
+        run: node --test scripts/release/community-backend.test.mjs scripts/release/image-inputs.test.mjs scripts/release/source-archive-inputs.test.mjs scripts/release/mysql-compose.test.mjs

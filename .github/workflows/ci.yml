@@ -13,153 +13,35 @@ permissions:
   contents: read
 
 jobs:
-  frontend-quality:
-    name: 前端质量门禁 (lint / typecheck / build)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: agenteam-web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.15.1
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: agenteam-web/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-      - run: pnpm exec tsc --noEmit
-      - run: pnpm build
+  # 前端质量与测试统一引用 reusable workflow，定义见 frontend-check.yml（单一事实源）。
+  frontend:
+    name: 前端质量与测试
+    uses: ./.github/workflows/frontend-check.yml
+    with:
+      test-commands: |
+        pnpm test:i18n
+        pnpm test:home-task
+        pnpm test:navigation
+        pnpm test:resource-deletion
+        pnpm test:forms
+        pnpm test:channel-auth
+        pnpm test:schedule-actions
+        pnpm test:completion-notice
+        pnpm test:workflow
+        pnpm test:conversation-sidebar
+        pnpm test:file-preview
+        pnpm test:file-upload
+        pnpm test:model-config
+        pnpm test:tool-payload
+        pnpm test:markdown
+        pnpm test:conversation
+        # 组件/钩子集成测试（此前 11 个未挂载套件，已修复并纳入门禁）
+        pnpm test:components
 
-  frontend-tests:
-    name: 前端测试套件
-    runs-on: ubuntu-latest
-    needs: frontend-quality
-    defaults:
-      run:
-        working-directory: agenteam-web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.15.1
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: agenteam-web/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      # 已挂载且稳定通过的测试脚本（CI 必修门禁）
-      - name: 运行测试套件
-        run: |
-          pnpm test:i18n
-          pnpm test:home-task
-          pnpm test:navigation
-          pnpm test:resource-deletion
-          pnpm test:forms
-          pnpm test:channel-auth
-          pnpm test:schedule-actions
-          pnpm test:completion-notice
-          pnpm test:workflow
-          pnpm test:conversation-sidebar
-          pnpm test:file-preview
-          pnpm test:file-upload
-          pnpm test:model-config
-          pnpm test:tool-payload
-          pnpm test:markdown
-          pnpm test:conversation
-          # 组件/钩子集成测试（此前 11 个未挂载套件，已修复并纳入门禁）
-          pnpm test:components
-
+  # 后端构建与测试统一引用 reusable workflow，定义见 backend-test.yml（单一事实源）。
   backend:
     name: 后端构建与测试 (Maven)
-    runs-on: ubuntu-latest
-    # 189 个测试类、每个数据库测试都会新建库并跑一遍全量 Flyway 迁移，实测 60~150 分钟；
-    # 上限设为 240 分钟，避免异常挂起时长期占用 runner，也避免正常慢跑被误杀。
-    timeout-minutes: 240
-    defaults:
-      run:
-        working-directory: agenteam-server
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: maven
-      # 沙盒与对象存储测试依赖本地镜像，缺少时沙盒相关用例会返回 503
-      # "沙盒暂时无法使用"（与 community-checks.yml 保持一致）。
-      # 注意：本作业 defaults 的 working-directory 是 agenteam-server，
-      # 这两个路径相对仓库根目录，必须显式回到根目录，否则 docker build 会立刻失败。
-      - name: 构建共有办公沙箱镜像
-        working-directory: .
-        run: docker build --tag agenteam/sandbox-office:local deploy/sandbox
-      - name: 构建对象存储测试服务镜像
-        working-directory: .
-        run: docker build --tag agenteam/test-minio:2025-09-07-07c3a429 agenteam-server/src/test/resources/containers/minio
-      - name: 后端编译与测试
-        run: ./mvnw -B test
-      # 作业日志需要管理员权限才能下载，失败原因无法从外部读取；
-      # 这里把失败用例与堆栈片段以 ::error 形式写成注解（注解可公开读取），便于定位。
-      - name: 输出失败测试清单（供注解定位）
-        if: failure()
-        run: |
-          python3 - <<'PY'
-          import glob, os, re, subprocess, xml.etree.ElementTree as ET
-
-          def emit(text):
-              # 注解里换行会截断输出，统一压成单行
-              text = re.sub(r"\s+", " ", text or "").strip()
-              print(f"::error::{text[:1400]}")
-
-          def shell(cmd):
-              try:
-                  return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60).stdout.strip()
-              except Exception as failure:
-                  return f"<{failure}>"
-
-          total = {'tests': 0, 'failures': 0, 'errors': 0}
-          for path in sorted(glob.glob('target/surefire-reports/*.xml')):
-              try:
-                  root = ET.parse(path).getroot()
-              except Exception:
-                  continue
-              for key in total:
-                  total[key] += int(root.get(key) or 0)
-              for case in root.iter('testcase'):
-                  for child in case:
-                      if child.tag not in ('failure', 'error'):
-                          continue
-                      name = f"{case.get('classname')}#{case.get('name')}"
-                      msg = (child.get('message') or '').strip().splitlines()
-                      head = msg[0] if msg else child.tag
-                      emit(f"{name} | {head}")
-                      body = [b.strip() for b in (child.text or '').strip().splitlines() if b.strip()]
-                      # 断言/报错所在行
-                      at = [b for b in body if '(' in b and '.java:' in b][:3]
-                      if at:
-                          emit(f"{name} | AT: {' // '.join(at)}")
-                      # 根因链：Spring 的真实原因藏在 Caused by 里，只看首行无法定位
-                      caused = [b for b in body if b.startswith('Caused by')][:10]
-                      if caused:
-                          emit(f"{name} | CAUSED: {' // '.join(caused)}")
-                      elif body:
-                          emit(f"{name} | STACK: {' // '.join(body[:12])}")
-          emit(f"SUMMARY tests={total['tests']} failures={total['failures']} errors={total['errors']}")
-          # 上下文加载失败多由容器/磁盘/连接资源耗尽引起，顺带记录运行环境
-          emit(f"ENV df: {shell('df -h / | tail -1')} | mem: {shell('free -m | head -2 | tail -1')}")
-          emit(f"ENV docker containers={shell('docker ps -a --format \"{{.ID}}\" | wc -l')} images={shell('docker images --format \"{{.ID}}\" | wc -l')}")
-          PY
-      - name: 上传测试报告
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: surefire-reports
-          path: agenteam-server/target/surefire-reports
-          if-no-files-found: ignore
+    uses: ./.github/workflows/backend-test.yml
 
   security:
     name: 安全门禁 (P0)
